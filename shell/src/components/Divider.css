@@ -1,0 +1,18 @@
+.h30-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-2) 0;
+}
+
+.h30-divider__line {
+  flex: 1 0 0;
+  height: 1px;
+  background: var(--color-border-default);
+}
+
+.h30-divider__label {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}

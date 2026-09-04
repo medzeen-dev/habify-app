@@ -1,0 +1,37 @@
+.h30-facts {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+}
+
+.h30-facts__row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  padding: var(--space-5);
+}
+.h30-facts__row + .h30-facts__row {
+  border-top: 1px solid var(--color-border-default);
+}
+
+.h30-facts__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-accent-brand);
+}
+
+.h30-facts__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.h30-rueckweg {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-4);
+}

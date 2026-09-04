@@ -1,0 +1,79 @@
+.h30-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start; /* don't stretch inside column flex containers */
+  gap: var(--space-2);
+  height: 48px; /* touch target, BFSG (Button DS doc) */
+  padding: 0 var(--space-6);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Page-level action: full-width on mobile, content-width on desktop. */
+.h30-btn--page {
+  width: 100%;
+}
+@media (min-width: 768px) {
+  .h30-btn--page {
+    width: auto;
+  }
+}
+
+.h30-btn__ext {
+  flex-shrink: 0;
+}
+
+.h30-btn--block {
+  display: flex;
+  width: 100%;
+}
+
+/* Secondary — equal-rank options / subordinate actions. Hover & pressed carry the brand border. */
+.h30-btn--secondary {
+  background: var(--color-action-secondary-default);
+  border-color: var(--color-border-default);
+  color: var(--color-text-brand);
+}
+.h30-btn--secondary:hover {
+  border-color: var(--color-text-brand);
+}
+.h30-btn--secondary:active {
+  border-color: var(--color-text-brand);
+  background: var(--color-bg-subtle);
+}
+
+/* Primary — the one action of the page (brown/600 default, AA 5.06:1). */
+.h30-btn--primary {
+  background: var(--color-action-primary-default);
+  border-color: var(--color-action-primary-default);
+  color: var(--color-text-on-brand);
+}
+.h30-btn--primary:hover {
+  background: color-mix(in srgb, var(--color-action-primary-default) 88%, #000);
+  border-color: color-mix(in srgb, var(--color-action-primary-default) 88%, #000);
+}
+.h30-btn--primary:active {
+  background: color-mix(in srgb, var(--color-action-primary-default) 78%, #000);
+}
+
+.h30-btn:focus-visible {
+  outline: 2px solid var(--color-text-brand);
+  outline-offset: 2px;
+}
+
+.h30-btn:disabled {
+  cursor: not-allowed;
+}
+/* Disabled primary uses dedicated tokens (grey), not opacity (design). */
+.h30-btn--primary:disabled {
+  background: var(--color-action-primary-disabled);
+  border-color: var(--color-action-primary-disabled);
+  color: var(--color-text-disabled);
+}
+.h30-btn--secondary:disabled {
+  opacity: 0.5;
+}

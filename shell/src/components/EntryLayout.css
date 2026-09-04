@@ -1,0 +1,66 @@
+.h30-entry {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--color-bg-page);
+}
+
+.h30-entry__content {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding: 40px var(--space-5);
+}
+
+.h30-entry__col {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+@media (min-width: 768px) {
+  .h30-entry__content {
+    padding: 96px var(--space-7);
+  }
+}
+
+/* Shared "Kopf" (heading + lead) used across the entry screens. */
+.h30-kopf {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.h30-kopf--wide {
+  gap: var(--space-3); /* Fehlerseite uses 12 */
+}
+
+.h30-h1 {
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 28px;
+  letter-spacing: -0.2px;
+  color: var(--color-text-primary);
+}
+
+.h30-lead {
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 26px;
+  color: var(--color-text-secondary);
+}
+
+@media (min-width: 768px) {
+  .h30-h1 {
+    font-size: 28px;
+    line-height: 36px;
+    letter-spacing: -0.3px;
+  }
+  .h30-lead {
+    font-size: 18px;
+    line-height: 28px;
+  }
+}

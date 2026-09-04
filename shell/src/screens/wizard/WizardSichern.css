@@ -1,0 +1,37 @@
+.h30-sichern__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+}
+
+/* Two mandatory paths: stacked on mobile, side-by-side (equal) on desktop. */
+.h30-sichern__paths {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+}
+.h30-sichern__paths .h30-btn {
+  width: 100%;
+}
+
+.h30-cascade {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-4);
+  border: 1px dashed var(--color-border-default);
+  border-radius: var(--radius-sm);
+}
+
+@media (min-width: 768px) {
+  .h30-sichern__paths {
+    flex-direction: row;
+  }
+  .h30-sichern__paths .h30-btn {
+    width: auto;
+    flex: 1 0 0;
+  }
+}

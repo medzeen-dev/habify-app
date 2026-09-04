@@ -1,0 +1,41 @@
+.h30-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 56px;
+  padding: 0 var(--space-5);
+  background: var(--color-bg-surface);
+}
+
+.h30-header--bordered {
+  border-bottom: 1px solid var(--color-border-default);
+}
+
+.h30-header__wordmark {
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.2px;
+  color: var(--color-text-brand);
+}
+
+/* Reserved client-logo slot; kept even when empty so the wordmark stays put. */
+.h30-header__client-slot {
+  width: 96px;
+  height: 26px;
+}
+
+@media (min-width: 768px) {
+  .h30-header {
+    height: 72px;
+    padding: 0 var(--space-7);
+  }
+  .h30-header__wordmark {
+    font-size: 22px;
+  }
+  .h30-header__client-slot {
+    width: 114px;
+    height: 32px;
+  }
+}

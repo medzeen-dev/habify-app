@@ -1,0 +1,43 @@
+.h30-cb {
+  display: flex;
+  align-items: flex-start; /* label is multi-line — top-aligned (DS doc) */
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) 0;
+  cursor: pointer;
+}
+
+.h30-cb__input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+.h30-cb__box {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-surface);
+  color: var(--color-text-on-brand);
+}
+
+.h30-cb__input:checked + .h30-cb__box {
+  background: var(--color-accent-brand);
+  border-color: var(--color-accent-brand);
+}
+
+.h30-cb__input:focus-visible + .h30-cb__box {
+  outline: 2px solid var(--color-text-brand);
+  outline-offset: 2px;
+}
+
+.h30-cb__label {
+  color: var(--color-text-primary);
+}
