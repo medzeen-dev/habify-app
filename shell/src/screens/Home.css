@@ -1,3 +1,6 @@
+/* Home hub layout. Column max 720 (Figma §3), sections stacked with a 24px rhythm.
+   Cards sit on the page background; the hero has no card. Tokens only (DL-043/047). */
+
 .h30-home {
   display: flex;
   flex-direction: column;
@@ -7,16 +10,260 @@
 
 .h30-home__content {
   flex: 1;
+  padding: var(--space-6) var(--space-5) var(--space-8);
+}
+
+.h30-home__col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+  .h30-home__content {
+    padding: var(--space-8) var(--space-6) var(--space-8);
+  }
+}
+
+/* ---- Hero ---------------------------------------------------------------- */
+.h30-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.h30-hero__label {
+  color: var(--color-text-muted);
+  text-transform: none;
+}
+.h30-hero__title {
+  margin-top: var(--space-2);
+  color: var(--color-text-primary);
+}
+.h30-hero__sub {
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-5);
+  color: var(--color-text-secondary);
+}
+
+/* ---- Info block (Momentum waiting, state D only, DL-048) ----------------- */
+.h30-infoblock {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+}
+.h30-infoblock__icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+.h30-infoblock__line1 {
+  color: var(--color-text-primary);
+}
+.h30-infoblock__line2 {
+  margin-top: var(--space-1);
+  color: var(--color-text-muted);
+}
+
+/* ---- Shared card --------------------------------------------------------- */
+.h30-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 3px rgba(36, 31, 28, 0.08);
+}
+.h30-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-6) var(--space-4);
+}
+.h30-card__head-icon {
+  flex-shrink: 0;
+  color: var(--color-text-primary);
+}
+
+/* ---- Task list (deadline list, DL-052) ----------------------------------- */
+.h30-tasks {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 3px rgba(36, 31, 28, 0.08);
+}
+.h30-tasks__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-6) var(--space-6) var(--space-4);
+}
+.h30-tasks__head-icon {
+  flex-shrink: 0;
+  color: var(--color-text-primary);
+}
+.h30-tasks__empty {
+  padding: 0 var(--space-6) var(--space-6);
+  color: var(--color-text-secondary);
+}
+.h30-tasks__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Mobile: tag drops below the body (matches Figma 1:559); desktop: tag in a right
+   rail. Grid keeps the body from being squeezed by the tag on narrow screens. */
+.h30-task {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'marker body chevron'
+    'marker tag  chevron';
+  column-gap: var(--space-3);
+  row-gap: var(--space-2);
+  align-items: start;
+  width: 100%;
+  padding: var(--space-4) var(--space-6);
+  border: none;
+  border-top: 1px solid var(--color-border-default);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.h30-task:hover {
+  background: var(--color-bg-brand-subtle);
+}
+.h30-task:focus-visible {
+  outline: 2px solid var(--color-text-brand);
+  outline-offset: -2px;
+}
+.h30-task__marker {
+  grid-area: marker;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+}
+.h30-task__body {
+  grid-area: body;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.h30-task__title {
+  color: var(--color-text-primary);
+}
+.h30-task__desc {
+  color: var(--color-text-secondary);
+}
+/* DL-052/DL-043: brand-colour date tag, never red. */
+.h30-task__tag {
+  grid-area: tag;
+  justify-self: start;
+  padding: var(--space-1) var(--space-3);
+  border-radius: 999px;
+  background: var(--color-bg-brand-subtle);
+  color: var(--color-text-brand);
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.h30-task__chevron {
+  grid-area: chevron;
+  align-self: center;
+  color: var(--color-text-muted);
+}
+
+@media (min-width: 768px) {
+  .h30-task {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: 'marker body tag chevron';
+  }
+  .h30-task__tag {
+    align-self: center;
+  }
+}
+
+/* ---- Two-column section: webinars + coach -------------------------------- */
+.h30-home__duo {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-6);
+}
+@media (min-width: 768px) {
+  .h30-home__duo {
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+  }
+}
+
+/* ---- Webinars ------------------------------------------------------------ */
+.h30-webinars {
+  display: flex;
+  flex-direction: column;
+}
+.h30-webinars__list {
+  margin: 0;
+  padding: 0 var(--space-6);
+  list-style: none;
+}
+.h30-webinar {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-border-default);
+}
+.h30-webinar:first-child {
+  border-top: none;
+}
+.h30-webinar__when {
+  color: var(--color-text-brand);
+}
+.h30-webinar__title {
+  margin-top: var(--space-1);
+  color: var(--color-text-primary);
+}
+.h30-webinars__foot {
+  margin-top: auto;
+  padding: var(--space-4) var(--space-6) var(--space-6);
+}
+.h30-webinars__hint {
+  margin-top: var(--space-3);
+}
+
+/* ---- Coach widget (DL-046) ----------------------------------------------- */
+.h30-coach {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--space-6);
+}
+.h30-coach__avatar {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px var(--space-5);
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--color-bg-brand-subtle);
 }
-
-.h30-home__inner {
-  max-width: 480px;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
+.h30-coach__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.h30-coach__img-fallback {
+  color: var(--color-accent-brand);
+}
+.h30-coach__title {
+  margin-top: var(--space-6);
+  color: var(--color-text-primary);
+}
+.h30-coach__blurb {
+  margin-top: var(--space-3);
+  margin-bottom: var(--space-5);
+  color: var(--color-text-secondary);
 }

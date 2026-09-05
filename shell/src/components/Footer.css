@@ -1,0 +1,29 @@
+.h30-footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-6) var(--space-5);
+  border-top: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
+}
+
+.h30-footer__links {
+  display: flex;
+  gap: var(--space-6);
+}
+
+.h30-footer__link {
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+.h30-footer__link:hover {
+  color: var(--color-text-brand);
+  text-decoration: underline;
+}
+.h30-footer__link:focus-visible {
+  outline: 2px solid var(--color-text-brand);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}

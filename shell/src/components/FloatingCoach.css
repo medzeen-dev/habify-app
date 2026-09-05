@@ -1,0 +1,32 @@
+.h30-coachfab {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-action-primary-default);
+  color: var(--color-text-on-brand);
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(36, 31, 28, 0.18);
+  transition: background-color 0.15s ease;
+}
+.h30-coachfab:hover {
+  background: color-mix(in srgb, var(--color-action-primary-default) 88%, #000);
+}
+.h30-coachfab:focus-visible {
+  outline: 2px solid var(--color-text-brand);
+  outline-offset: 2px;
+}
+
+@media (min-width: 768px) {
+  .h30-coachfab {
+    right: var(--space-7);
+    bottom: var(--space-7);
+  }
+}
