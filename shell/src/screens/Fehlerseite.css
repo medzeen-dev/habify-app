@@ -1,4 +1,4 @@
-/* Code-Weg block (only shown in state F) — subtle info card holding the recovery input. */
+/* Code-Weg block (only state F) — subtle info card holding the recovery input. */
 .h30-codeweg {
   display: flex;
   flex-direction: column;

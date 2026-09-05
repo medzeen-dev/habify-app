@@ -3,7 +3,7 @@ import { useHashRoute } from './lib/useHashRoute'
 import { bootstrap, type Bootstrap } from './lib/bootstrap'
 import { Einstieg } from './screens/Einstieg'
 import { CodeEingabe } from './screens/CodeEingabe'
-import { FehlerseiteF } from './screens/FehlerseiteF'
+import { Fehlerseite } from './screens/Fehlerseite'
 import { Wizard } from './screens/Wizard'
 import { Home } from './screens/Home'
 
@@ -23,7 +23,7 @@ export default function App() {
     case 'code':
       return <CodeEingabe onBack={() => navigate('einstieg')} onSuccess={() => navigate('home')} />
     case 'fehler-f':
-      return <FehlerseiteF onSuccess={() => navigate('home')} />
+      return <Fehlerseite state="F" onSuccess={() => navigate('home')} />
     case 'wizard':
       return <Wizard pid={boot.pid} onRecover={() => navigate('code')} onComplete={() => navigate('home')} />
     case 'home':
@@ -45,6 +45,14 @@ export default function App() {
     )
   }
 
-  // No pid → Fehlerseite F (DL-062). TODO: invalid → B, expired → C, unreachable → E (copy pending).
-  return <FehlerseiteF onSuccess={() => navigate('home')} />
+  // Blocked: map the accesscontrol reason to a Fehlerseite state (DL-062).
+  const errState =
+    boot.reason === 'invalid' ? 'B' : boot.reason === 'expired' ? 'C' : boot.reason === 'unreachable' ? 'E' : 'F'
+  return (
+    <Fehlerseite
+      state={errState}
+      expiryDate={boot.expiryDate}
+      onSuccess={() => navigate('home')}
+    />
+  )
 }

@@ -4,7 +4,7 @@ import { cacheValidatedPid, readState, resolvePid } from '../state/h30State'
 export interface Bootstrap {
   pid: string | null
   valid: boolean
-  reason?: 'invalid' | 'expired' | 'nopid'
+  reason?: 'invalid' | 'expired' | 'nopid' | 'unreachable'
   expiryDate?: string
   programmName?: string
   hasUid: boolean
@@ -30,7 +30,7 @@ export async function bootstrap(): Promise<Bootstrap> {
     }
     return { pid, valid: false, reason: ac.reason ?? 'invalid', expiryDate: ac.expiryDate, hasUid }
   } catch {
-    // Network/Catalyst unreachable → Fehlerseite E in the full impl; treat as blocked.
-    return { pid, valid: false, reason: 'invalid', hasUid }
+    // Network / Catalyst down → Fehlerseite E (DL-062).
+    return { pid, valid: false, reason: 'unreachable', hasUid }
   }
 }
