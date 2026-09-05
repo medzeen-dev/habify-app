@@ -1,0 +1,6 @@
+.h30-konflikt__actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+}
