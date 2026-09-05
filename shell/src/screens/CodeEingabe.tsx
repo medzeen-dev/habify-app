@@ -6,32 +6,38 @@ import { InputRecoveryCode } from '../components/InputRecoveryCode'
 import { Divider } from '../components/Divider'
 import { ContactLine } from '../components/ContactLine'
 import { isValidChecksum, isValidFormat, RECOVERY_ERROR } from '../lib/recoveryCode'
+import { runRecover } from '../lib/recoverFlow'
 import './CodeEingabe.css'
 
 interface CodeEingabeProps {
   /** Back link → Einstieg (DL-056). No "Neu anfangen" button. */
   onBack?: () => void
-  /** Valid code → /recover, then accesscontrol(pid) (DL-057). Wired to backend later. */
-  onSubmit?: (code: string) => void
+  /** Recovery succeeded → into the programme (DL-057). */
+  onSuccess?: () => void
 }
 
 /**
  * Einstieg — Code eingeben (DL-056). Recovery-code field, primary action,
  * "other device" path, the DL-042 frozen-loss block, back link. Design: §1 node 1:1039.
  */
-export function CodeEingabe({ onBack, onSubmit }: CodeEingabeProps) {
+export function CodeEingabe({ onBack, onSuccess }: CodeEingabeProps) {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const submit = () => {
+  const submit = async () => {
     // (1) Local checksum — immediate, no server call (DL-029).
     if (!isValidFormat(code) || !isValidChecksum(code)) {
       setError(RECOVERY_ERROR.checksum)
       return
     }
     setError(null)
-    // (2) not-found / (3) rate-limit come back from the server (pending backend, DL-057).
-    onSubmit?.(code)
+    setBusy(true)
+    // (2) /recover → accesscontrol; not-found / errors come back here (DL-057).
+    const result = await runRecover(code)
+    setBusy(false)
+    if (result.ok) onSuccess?.()
+    else setError(result.error)
   }
 
   return (
@@ -55,10 +61,10 @@ export function CodeEingabe({ onBack, onSubmit }: CodeEingabeProps) {
       />
       <Button
         variant="primary"
-        label="Zugang wiederherstellen"
+        label={busy ? 'Wird geprüft …' : 'Zugang wiederherstellen'}
         className="h30-btn--page"
         onClick={submit}
-        disabled={code.length < 8}
+        disabled={busy || code.length < 8}
       />
 
       <Divider />

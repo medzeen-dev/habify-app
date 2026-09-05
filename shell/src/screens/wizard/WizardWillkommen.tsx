@@ -27,7 +27,15 @@ const FACTS = [
  * No uid is created here yet (DL-059) — the Rückweg catches a misclick before that.
  * Design: §2 node 1:790.
  */
-export function WizardWillkommen({ onNext, onRecover }: { onNext: () => void; onRecover: () => void }) {
+export function WizardWillkommen({
+  onNext,
+  onRecover,
+  busy = false,
+}: {
+  onNext: () => void
+  onRecover: () => void
+  busy?: boolean
+}) {
   return (
     <WizardLayout step={1}>
       <h1 className="t-display">Kein Passwort, keine Anmeldung</h1>
@@ -54,7 +62,13 @@ export function WizardWillkommen({ onNext, onRecover }: { onNext: () => void; on
         nächsten Schritt.
       </p>
 
-      <Button variant="primary" label="Weiter" className="h30-btn--page" onClick={onNext} />
+      <Button
+        variant="primary"
+        label={busy ? 'Einen Moment …' : 'Weiter'}
+        className="h30-btn--page"
+        onClick={onNext}
+        disabled={busy}
+      />
 
       <div className="h30-rueckweg">
         <p className="t-body-sm text-secondary">Du hast schon einen Zugang?</p>

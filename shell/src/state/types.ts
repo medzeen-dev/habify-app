@@ -52,6 +52,7 @@ export interface RecoverResponse {
   found: boolean
   user_id?: string
   pid?: string
+  rateLimited?: boolean // too many attempts from this IP (DL-057)
 }
 
 /** Local-only, per-device UI flags (DL-081 §2a). "dismissed" means "seen", never

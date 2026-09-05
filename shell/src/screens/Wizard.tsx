@@ -13,14 +13,30 @@ type Step = 'willkommen' | 'sichern' | 'hilfe' | 'geraet'
  * step 2 (DL-059, idempotent). wizardCompleted is set on the click-through to the
  * end (DL-051) — not per step, not on the server.
  */
-export function Wizard({ onRecover, onComplete }: { onRecover: () => void; onComplete: () => void }) {
+export function Wizard({
+  pid,
+  onRecover,
+  onComplete,
+}: {
+  pid: string | null
+  onRecover: () => void
+  onComplete: () => void
+}) {
   const [step, setStep] = useState<Step>('willkommen')
   const [recoveryCode, setRecoveryCode] = useState('')
   const [secured, setSecured] = useState(false)
+  const [busy, setBusy] = useState(false)
 
-  const enterSichern = () => {
-    setRecoveryCode(ensureRegistered().recoveryCode) // DL-059
-    setStep('sichern')
+  const enterSichern = async () => {
+    if (!pid) return
+    setBusy(true)
+    try {
+      const r = await ensureRegistered(pid) // DL-059, server-generated uid + code
+      setRecoveryCode(r.recoveryCode)
+      setStep('sichern')
+    } finally {
+      setBusy(false)
+    }
   }
 
   const finish = () => {
@@ -53,6 +69,6 @@ export function Wizard({ onRecover, onComplete }: { onRecover: () => void; onCom
     case 'geraet':
       return <WizardGeraet onComplete={finish} />
     default:
-      return <WizardWillkommen onNext={enterSichern} onRecover={onRecover} />
+      return <WizardWillkommen onNext={enterSichern} onRecover={onRecover} busy={busy} />
   }
 }

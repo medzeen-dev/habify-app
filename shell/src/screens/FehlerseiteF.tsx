@@ -5,11 +5,12 @@ import { InputRecoveryCode } from '../components/InputRecoveryCode'
 import { Divider } from '../components/Divider'
 import { ContactLine } from '../components/ContactLine'
 import { isValidChecksum, isValidFormat, RECOVERY_ERROR } from '../lib/recoveryCode'
+import { runRecover } from '../lib/recoverFlow'
 import './FehlerseiteF.css'
 
 interface FehlerseiteFProps {
-  /** Valid code → /recover, then accesscontrol(pid) (DL-057). Wired to backend later. */
-  onSubmit?: (code: string) => void
+  /** Recovery succeeded → into the programme (DL-057). */
+  onSuccess?: () => void
 }
 
 /**
@@ -20,17 +21,22 @@ interface FehlerseiteFProps {
  * States B (pid invalid) / C (pid expired) / E (Catalyst unreachable) share this
  * frame with different text and no input — added when their reference copy is pulled.
  */
-export function FehlerseiteF({ onSubmit }: FehlerseiteFProps) {
+export function FehlerseiteF({ onSuccess }: FehlerseiteFProps) {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const submit = () => {
+  const submit = async () => {
     if (!isValidFormat(code) || !isValidChecksum(code)) {
       setError(RECOVERY_ERROR.checksum)
       return
     }
     setError(null)
-    onSubmit?.(code)
+    setBusy(true)
+    const result = await runRecover(code)
+    setBusy(false)
+    if (result.ok) onSuccess?.()
+    else setError(result.error)
   }
 
   return (
@@ -62,10 +68,10 @@ export function FehlerseiteF({ onSubmit }: FehlerseiteFProps) {
         />
         <Button
           variant="primary"
-          label="Zugang wiederherstellen"
+          label={busy ? 'Wird geprüft …' : 'Zugang wiederherstellen'}
           className="h30-btn--page"
           onClick={submit}
-          disabled={code.length < 8}
+          disabled={busy || code.length < 8}
         />
       </section>
 
