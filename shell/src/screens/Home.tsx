@@ -5,7 +5,7 @@ import { Hero } from './home/Hero'
 import { TaskList } from './home/TaskList'
 import { WebinarCard } from './home/WebinarCard'
 import { CoachCard } from './home/CoachCard'
-import { DEMO_HOME, type HomeModel } from './home/homeData'
+import { DEMO_HOME, type HomeModel, type TabKey } from './home/homeData'
 import './Home.css'
 
 /**
@@ -17,10 +17,16 @@ import './Home.css'
  * Data is the presentational demo model for now (real phase/progress data is owned by
  * DL-076; cohort schedule shape TBD). Pass `data` to override.
  */
-export function Home({ data = DEMO_HOME }: { data?: HomeModel }) {
+export function Home({
+  data = DEMO_HOME,
+  onNavigate,
+}: {
+  data?: HomeModel
+  onNavigate?: (t: TabKey | 'einstellungen') => void
+}) {
   return (
     <div className="h30-home">
-      <Nav tabs={data.tabs} />
+      <Nav tabs={data.tabs} onNavigate={onNavigate} />
 
       <main className="h30-home__content">
         <div className="h30-home__col">

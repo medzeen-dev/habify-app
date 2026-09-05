@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 // Interim hash routing so the entry/wizard screens are navigable/deep-linkable.
 // The real Shell routing (URL pid lifecycle — which screen shows when, DL-030/031/062)
 // replaces this once the backend is wired.
-const ROUTES = ['einstieg', 'code', 'fehler-f', 'wizard', 'home'] as const
+const ROUTES = ['einstieg', 'code', 'fehler-f', 'wizard', 'home', 'einstellungen'] as const
 export type Route = (typeof ROUTES)[number]
 
 function parse(): Route {

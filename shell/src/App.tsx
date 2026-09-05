@@ -8,6 +8,8 @@ import { Fehlerseite } from './screens/Fehlerseite'
 import { KonfliktProgramm } from './screens/KonfliktProgramm'
 import { Wizard } from './screens/Wizard'
 import { Home } from './screens/Home'
+import { Einstellungen } from './screens/Einstellungen'
+import type { TabKey } from './screens/home/homeData'
 
 export default function App() {
   const [route, navigate] = useHashRoute()
@@ -27,6 +29,11 @@ export default function App() {
   const stripPid = () =>
     window.history.replaceState(null, '', window.location.pathname + window.location.hash)
 
+  // Nav targets (interim hash nav). Phase tabs are not built yet → no-op for now.
+  const onNavigate = (target: TabKey | 'einstellungen') => {
+    if (target === 'home' || target === 'einstellungen') navigate(target)
+  }
+
   // Explicit sub-routes (interim hash nav) stay reachable.
   switch (route) {
     case 'code':
@@ -36,14 +43,16 @@ export default function App() {
     case 'wizard':
       return <Wizard pid={readState().pid} onRecover={() => navigate('code')} onComplete={() => navigate('home')} />
     case 'home':
-      return <Home />
+      return <Home onNavigate={onNavigate} />
+    case 'einstellungen':
+      return <Einstellungen onNavigate={onNavigate} />
     default:
       break
   }
 
   if (boot.kind === 'ok') {
     return boot.hasUid ? (
-      <Home />
+      <Home onNavigate={onNavigate} />
     ) : (
       <Einstieg
         programmName={boot.programmName}
