@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "source": "functions",
+    "targets": [
+      "accesscontrol",
+      "recovery",
+      "zohoformswebhook"
+    ]
+  }
+}

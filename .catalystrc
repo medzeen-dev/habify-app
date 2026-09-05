@@ -1,0 +1,36 @@
+{
+  "defaults": {
+    "project": 1,
+    "env": 1
+  },
+  "actives": {
+    "project": 1,
+    "env": 1
+  },
+  "projects": [
+    {
+      "idx": 1,
+      "id": "22671000000014048",
+      "name": "Habify30",
+      "domain": {
+        "id": "30042150822",
+        "name": "habify30-20116360871.development"
+      },
+      "timezone": "Europe/Berlin",
+      "env": [
+        {
+          "idx": 1,
+          "id": "20116360871",
+          "name": "Development",
+          "type": 3
+        },
+        {
+          "idx": 2,
+          "id": "30042214524",
+          "name": "Production",
+          "type": 1
+        }
+      ]
+    }
+  ]
+}
