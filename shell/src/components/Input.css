@@ -1,0 +1,16 @@
+.h30-input { display: flex; flex-direction: column; gap: var(--space-2); }
+.h30-input__label { color: var(--color-text-muted); }
+.h30-input__field {
+  width: 100%; box-sizing: border-box; padding: 12px 16px;
+  border: 1px solid var(--color-border-default); border-radius: var(--radius-md);
+  background: var(--color-bg-surface); color: var(--color-text-primary);
+  font-family: 'Manrope', system-ui, sans-serif; font-size: 16px; line-height: 24px;
+}
+.h30-input__field::placeholder { color: var(--color-text-muted); }
+.h30-input__field:focus-visible {
+  outline: 2px solid var(--color-text-brand); outline-offset: 1px;
+  border-color: var(--color-text-brand);
+}
+.h30-input__field--error { border-color: var(--color-text-error); }
+.h30-input__help { color: var(--color-text-muted); margin: var(--space-1) 0 0; }
+.h30-input__help--error { color: var(--color-text-error); }

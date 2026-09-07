@@ -1,0 +1,38 @@
+/* Peer-group pages (DL-053). Logos-only header + centred column max 640. */
+.h30-peer { min-height: 100vh; background: var(--color-bg-page); }
+
+.h30-peer__content { display: flex; justify-content: center; padding: 48px 24px 80px; }
+.h30-peer__col {
+  width: 640px; max-width: 100%;
+  display: flex; flex-direction: column; gap: var(--space-5);
+}
+
+.h30-peer__title { color: var(--color-text-primary); margin: 0; }
+.h30-peer__intro { color: var(--color-text-secondary); margin: 0; }
+.h30-peer__note { color: var(--color-text-secondary); margin: 0; }
+.h30-peer__footnote { color: var(--color-text-muted); margin: var(--space-2) 0 0; }
+.h30-peer__help-error { color: var(--color-text-error); margin: 0; }
+
+/* Assignment explanation — three "Fakt" cards, one bordered container. */
+.h30-peer__facts {
+  border: 1px solid var(--color-border-default); border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+}
+.h30-peer__fact { display: flex; gap: var(--space-4); padding: var(--space-5); }
+.h30-peer__fact + .h30-peer__fact { border-top: 1px solid var(--color-border-default); }
+.h30-peer__fact-icon { flex: 0 0 auto; color: var(--color-text-brand); margin-top: 2px; }
+.h30-peer__fact-body { display: flex; flex-direction: column; gap: var(--space-1); }
+.h30-peer__fact-title { color: var(--color-text-primary); margin: 0; }
+.h30-peer__fact-text { color: var(--color-text-secondary); margin: 0; }
+
+.h30-peer__consent { margin-top: var(--space-1); }
+.h30-peer__cta { margin-top: var(--space-1); }
+
+/* Exit-confirmation: mirrored address block. */
+.h30-peer__mirror-label { color: var(--color-text-muted); margin: 0 0 var(--space-1); }
+.h30-peer__mirror-email { color: var(--color-text-primary); margin: 0; word-break: break-all; }
+
+@media (max-width: 900px) {
+  .h30-peer__content { padding: 24px 20px 48px; }
+  .h30-peer__fact { padding: var(--space-4); }
+}
