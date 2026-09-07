@@ -24,6 +24,8 @@ export type HeroStateKey = 'A' | 'B' | 'C' | 'D'
 export interface HeroModel {
   label: string // "Aktuelle Phase" | "Zuletzt bearbeitet"
   phaseTitle: string
+  /** Which phase the CTA opens (its resume lesson, via onNavigate → App gate). */
+  phase: PhaseKey
   sub: string
   ctaLabel: string
   /**
@@ -66,24 +68,28 @@ export const HERO_STATES: Record<HeroStateKey, HeroModel> = {
   A: {
     label: 'Aktuelle Phase',
     phaseTitle: 'Impulsphase',
+    phase: 'impuls',
     sub: 'Vier Lektionen. Die erste erklärt, wie das Programm aufgebaut ist.',
     ctaLabel: 'Beginnen',
   },
   B: {
     label: 'Aktuelle Phase',
     phaseTitle: 'Impulsphase',
+    phase: 'impuls',
     sub: 'Lektion 2 von 4 — Wo dein Vorsatz im Alltag hängen bleibt',
     ctaLabel: 'Weiter in der Impulsphase',
   },
   C: {
     label: 'Aktuelle Phase',
     phaseTitle: 'Veränderungswerkstatt',
+    phase: 'werkstatt',
     sub: 'Die Impulsphase ist abgeschlossen. Hier erarbeitest du deinen Plan für die 30 Tage.',
     ctaLabel: 'Weiter in der Veränderungswerkstatt',
   },
   D: {
     label: 'Zuletzt bearbeitet',
     phaseTitle: 'Veränderungswerkstatt',
+    phase: 'werkstatt',
     sub: 'Dein Plan steht. Die Inhalte bleiben offen, du kannst jederzeit zurück.',
     ctaLabel: 'Zurück in die Veränderungswerkstatt',
     waitingNote: {

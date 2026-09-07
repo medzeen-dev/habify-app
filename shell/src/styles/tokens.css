@@ -15,6 +15,7 @@
   --color-text-brand: #7c4933;
   --color-text-on-brand: #ffffff;
   --color-text-error: #8c2418;
+  --color-text-success: #3a5a54; /* DL-043 success — only semantic (e.g. "Gespeichert") */
 
   /* Brand accent — brown/500 #b37357. NOT a button fill (3.29:1). Lives as icons, borders, active tab, progress (DL-043). */
   --color-accent-brand: #b37357;

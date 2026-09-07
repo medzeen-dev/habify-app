@@ -1,0 +1,88 @@
+/* Lesson player (DL-083/DL-085): persistent app nav + course-nav sidebar +
+   reading-register column (One-Scroll). Mobile (<900px): the sidebar collapses into
+   a bottom-sheet with a 50px grip (Figma 58:549 closed / 59:626 open). */
+
+.h30-lesson { min-height: 100vh; background: var(--color-bg-page); }
+
+.h30-lesson__body { display: flex; align-items: stretch; }
+
+/* Course-nav sidebar (desktop). */
+.h30-lesson__side {
+  flex: 0 0 320px; width: 320px; box-sizing: border-box;
+  background: var(--color-bg-surface); border-right: 1px solid var(--color-border-default);
+  padding: 48px 24px;
+}
+.h30-lesson__side-title { color: var(--color-text-muted); margin: 0 0 var(--space-4); }
+.h30-lesson__lessons { list-style: none; margin: 0; padding: 0; }
+.h30-lesson__lessons > li + li { border-top: 1px solid var(--color-border-default); margin-top: var(--space-4); padding-top: var(--space-4); }
+.h30-lesson__lesson {
+  display: block; width: 100%; text-align: left; background: none; border: 0; cursor: pointer;
+  font-family: 'Manrope', system-ui, sans-serif; font-size: 16px; line-height: 24px;
+  color: var(--color-text-secondary); padding: 0;
+}
+.h30-lesson__lesson.is-active { color: var(--color-text-brand); font-weight: 600; }
+.h30-lesson__sections { list-style: none; margin: var(--space-2) 0 0; padding: 0 0 0 var(--space-5); }
+.h30-lesson__sections li + li { margin-top: var(--space-2); }
+.h30-lesson__sections a { color: var(--color-text-muted); text-decoration: none; }
+.h30-lesson__sections a.is-current { color: var(--color-text-brand); }
+
+/* Reading area — centred column. */
+.h30-lesson__main { flex: 1 1 auto; display: flex; justify-content: center; padding: 48px 60px 80px; }
+.h30-lesson__col {
+  width: 720px; max-width: 100%;
+  display: flex; flex-direction: column; gap: var(--space-5); /* block-to-block rhythm */
+}
+
+.h30-lesson__header { display: flex; flex-direction: column; gap: var(--space-2); }
+.h30-lesson__eyebrow { color: var(--color-text-brand); }
+.h30-lesson__title { color: var(--color-text-primary); margin: 0; }
+.h30-lesson__rule { width: 96px; height: 3px; background: var(--color-accent-brand); }
+.h30-lesson__meta { color: var(--color-text-muted); }
+
+.h30-lesson__finish { display: flex; justify-content: center; padding-top: var(--space-2); }
+.h30-lesson__phase-end { text-align: center; display: flex; flex-direction: column; gap: var(--space-4); align-items: center; padding-top: var(--space-6); }
+.h30-lesson__phase-end-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; justify-content: center; }
+
+.h30-lesson__missing { padding: 40px; color: var(--color-text-error); }
+
+/* --- Mobile bottom-sheet course nav (Figma 58:549 / 59:626). --- */
+/* Sheet + scrim exist only on mobile; hidden on desktop where the sidebar shows. */
+.h30-lesson__sheet, .h30-lesson__scrim { display: none; }
+
+@media (max-width: 900px) {
+  .h30-lesson__side { display: none; }
+  /* Reading column gets bottom room so the 50px grip never covers the last block. */
+  .h30-lesson__main { padding: 24px 20px calc(48px + 50px); }
+
+  .h30-lesson__scrim {
+    display: block; position: fixed; inset: 0; z-index: 39;
+    border: 0; padding: 0; background: rgba(0, 0, 0, 0.4); cursor: pointer;
+  }
+
+  .h30-lesson__sheet {
+    display: flex; flex-direction: column;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    max-height: 80vh;
+    background: var(--color-bg-surface);
+    border-top: 1px solid var(--color-border-default);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  .h30-lesson__grip {
+    flex: 0 0 auto; height: 50px; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center; gap: var(--space-3);
+    width: 100%; background: none; border: 0; cursor: pointer; position: relative;
+    color: var(--color-text-secondary);
+  }
+  /* The pull-handle pill, floated just above the label row. */
+  .h30-lesson__grip-bar {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+    width: 36px; height: 4px; border-radius: 2px; background: var(--color-border-default);
+  }
+  .h30-lesson__grip-label { color: var(--color-text-muted); }
+  .h30-lesson__grip-chevron { transition: transform 0.2s ease; }
+  .h30-lesson__sheet[data-open='true'] .h30-lesson__grip-chevron { transform: rotate(180deg); }
+
+  .h30-lesson__sheet-body { overflow-y: auto; padding: var(--space-2) 24px 24px; }
+}

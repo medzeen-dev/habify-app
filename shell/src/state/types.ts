@@ -63,6 +63,18 @@ export interface H30UiFlags {
   [key: string]: boolean | undefined
 }
 
+/** Per-lesson progress (DL-083 §6 / DL-085). Completion is the explicit "abschließen"
+ *  action (DL-060); a completed deadline task then disappears from Home (DL-052/DL-085). */
+export interface LessonProgress {
+  status: 'not-started' | 'in-progress' | 'completed'
+  lastSection?: number // section index for resume (DL-083 §4)
+}
+
+/** `progress` namespace — owned by DL-076/083/085, reserved by DL-081 §6. */
+export interface ProgressState {
+  lessons: Record<string, LessonProgress>
+}
+
 /** The single client store, persisted under localStorage key `h30.state` (DL-081 §2). */
 export interface H30State {
   schemaVersion: number
@@ -71,6 +83,6 @@ export interface H30State {
   recoveryCode: string | null // "XXXX-XXXX" (DL-029 / DL-059)
   wizardCompleted: boolean // set on click-through to Wizard end, never server (DL-051)
   language: string | null // null = follow navigator.language until user switches (DL-051)
-  progress: Record<string, unknown> // reserved — shape OWNED BY DL-076
+  progress: ProgressState // DL-083 §6 (was reserved under DL-081 §6)
   ui: H30UiFlags
 }

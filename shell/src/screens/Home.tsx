@@ -30,7 +30,7 @@ export function Home({
 
       <main className="h30-home__content">
         <div className="h30-home__col">
-          <Hero hero={data.hero} />
+          <Hero hero={data.hero} onContinue={() => onNavigate?.(data.hero.phase)} />
 
           {data.tasks.length > 0 && <TaskList tasks={data.tasks} />}
 

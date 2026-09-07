@@ -2,7 +2,7 @@ import { accesscontrol } from './api'
 import { cacheValidatedPid, readState } from '../state/h30State'
 
 export type Bootstrap =
-  | { kind: 'ok'; programmName?: string; hasUid: boolean }
+  | { kind: 'ok'; programmName?: string; hasUid: boolean; momentumStartDate?: string }
   | { kind: 'conflict'; urlPid: string; cachedPid: string; programmName?: string }
   | { kind: 'error'; reason: 'invalid' | 'expired' | 'nopid' | 'unreachable'; expiryDate?: string }
 
@@ -30,7 +30,7 @@ export async function bootstrap(): Promise<Bootstrap> {
         return { kind: 'conflict', urlPid, cachedPid, programmName: ac.programmName }
       }
       cacheValidatedPid(urlPid)
-      return { kind: 'ok', programmName: ac.programmName, hasUid }
+      return { kind: 'ok', programmName: ac.programmName, hasUid, momentumStartDate: ac.capabilities?.momentumStartDate }
     } catch {
       return { kind: 'error', reason: 'unreachable' }
     }
@@ -40,7 +40,7 @@ export async function bootstrap(): Promise<Bootstrap> {
   try {
     const ac = await accesscontrol(cachedPid as string)
     if (!ac.valid) return { kind: 'error', reason: ac.reason ?? 'invalid', expiryDate: ac.expiryDate }
-    return { kind: 'ok', programmName: ac.programmName, hasUid }
+    return { kind: 'ok', programmName: ac.programmName, hasUid, momentumStartDate: ac.capabilities?.momentumStartDate }
   } catch {
     return { kind: 'error', reason: 'unreachable' }
   }

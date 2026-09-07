@@ -9,6 +9,11 @@ import '@fontsource/manrope/800.css'
 import './index.css'
 import App from './App.tsx'
 
+// The Shell is a hash-routed SPA and owns scroll position itself (the lesson player
+// restores the reader's last section — DL-083 §4). Opt out of the browser's async
+// scroll restoration so it can't override our own scroll on reload.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />

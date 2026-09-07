@@ -3,7 +3,7 @@
 // here — never localStorage directly — so a field change is made once and
 // migration stays centralised.
 
-import type { H30State } from './types'
+import type { H30State, LessonProgress } from './types'
 
 const STORAGE_KEY = 'h30.state'
 
@@ -18,7 +18,7 @@ function defaultState(): H30State {
     recoveryCode: null,
     wizardCompleted: false,
     language: null,
-    progress: {},
+    progress: { lessons: {} },
     ui: {},
   }
 }
@@ -37,7 +37,7 @@ function migrate(parsed: Partial<H30State> | null): H30State {
     ...base,
     ...parsed,
     schemaVersion: H30_SCHEMA_VERSION,
-    progress: { ...base.progress, ...(parsed.progress ?? {}) },
+    progress: { lessons: { ...base.progress.lessons, ...(parsed.progress?.lessons ?? {}) } },
     ui: { ...base.ui, ...(parsed.ui ?? {}) },
   }
 }
@@ -84,4 +84,28 @@ export function resolvePid(urlPid: string | null | undefined): string | null {
 /** Cache a pid only once it has validated as valid:true (DL-031). */
 export function cacheValidatedPid(pid: string): void {
   patchState({ pid })
+}
+
+// --- Lesson progress (DL-083 §6 / DL-085) ---
+
+export function getLessonProgress(id: string): LessonProgress {
+  return readState().progress.lessons[id] ?? { status: 'not-started' }
+}
+
+function updateLesson(id: string, patch: Partial<LessonProgress>): void {
+  const s = readState()
+  const lessons = { ...s.progress.lessons, [id]: { ...getLessonProgress(id), ...patch } }
+  writeState({ ...s, progress: { lessons } })
+}
+
+/** Explicit "Lektion abschließen" (DL-060). Completion drives the Home task list
+ *  (a completed deadline task disappears — DL-052/DL-085). */
+export function markLessonCompleted(id: string): void {
+  updateLesson(id, { status: 'completed' })
+}
+
+/** Resume pointer: the last section reached (a discrete index, DL-083 §4). */
+export function setLastSection(id: string, index: number): void {
+  const cur = getLessonProgress(id)
+  updateLesson(id, { lastSection: index, status: cur.status === 'completed' ? 'completed' : 'in-progress' })
 }
