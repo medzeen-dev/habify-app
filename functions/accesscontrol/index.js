@@ -7,8 +7,11 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const ALLOWED_ORIGINS = ["https://habify30.k-a-d-o.com"];
-const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/; // Dev only (localhost Shell)
+// accesscontrol is called by BOTH the Shell and the peer-group origin (getPeerConfig,
+// DL-086) — the peer origin (its own subdomain) is added via the PEER_ORIGIN env var.
+const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
+const ALLOWED_ORIGINS = ["https://habify30.k-a-d-o.com", PEER_ORIGIN].filter(Boolean);
+const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/; // Dev only (localhost Shell/peer)
 
 app.use((req, res, next) => {
   const origin = req.headers.origin || "";
@@ -90,7 +93,29 @@ app.post("/", (req, res) => {
       const out = { status: "ok", valid: true };
       if (row.programm_name) out.programmName = row.programm_name;   // Einstieg sub-line (DL-055)
       if (row.contact_email) out.contactEmail = row.contact_email;   // reserved (DL-058)
-      res.status(200).json(out);
+
+      // Cohort capabilities (DL-081 §3a) — stored in a separate CohortConfig table
+      // (DL-086), attached here as the `capabilities` object the client expects.
+      // Fail-open: any error / missing config → respond valid without capabilities.
+      catalystApp.zcql().executeZCQLQuery(
+        "SELECT allowed_email_domains, manual_domain_exceptions, peer_group_cutoff_date FROM CohortConfig WHERE pid = '" + safePid + "'"
+      )
+        .then((cfgRows) => {
+          if (cfgRows && cfgRows.length) {
+            const c = cfgRows[0].CohortConfig;
+            const caps = {};
+            const domains = String(c.allowed_email_domains || "").split(",").map((s) => s.trim()).filter(Boolean);
+            const exceptions = String(c.manual_domain_exceptions || "").split(",").map((s) => s.trim()).filter(Boolean);
+            if (domains.length) caps.allowedEmailDomains = domains;
+            if (exceptions.length) caps.manualDomainExceptions = exceptions;
+            const cutoff = parseCatalystDate(c.peer_group_cutoff_date);
+            if (cutoff) caps.peerGroupCutoffDate = cutoff.toISOString().slice(0, 10);
+            else if (c.peer_group_cutoff_date) caps.peerGroupCutoffDate = String(c.peer_group_cutoff_date);
+            if (Object.keys(caps).length) out.capabilities = caps;
+          }
+          res.status(200).json(out);
+        })
+        .catch(() => { res.status(200).json(out); });
     })
     .catch((err) => {
       console.log(err);

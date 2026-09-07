@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { PeerSignup } from './pages/PeerSignup'
 import { PeerExitRequest } from './pages/PeerExitRequest'
 import { PeerExitSent } from './pages/PeerExitSent'
+import { PeerExitDone } from './pages/PeerExitDone'
 import { getPeerConfig, type PeerConfig } from './lib/peerApi'
 
 // Peer-group context (DL-053): three pid-only views, no uid, no localStorage. This
@@ -9,10 +10,11 @@ import { getPeerConfig, type PeerConfig } from './lib/peerApi'
 // entry (peer.html) and is deployed to its OWN origin so the browser's per-origin
 // isolation makes the Shell's uid physically unreadable here (the DPO boundary).
 
-type View = 'signup' | 'exit' | 'exit-sent'
+type View = 'signup' | 'exit' | 'exit-sent' | 'exit-done'
 
 function viewFromHash(): View {
   const h = window.location.hash.replace(/^#\/?/, '')
+  if (h.startsWith('abmelden')) return 'exit-done' // token-landing from the exit email
   return h.startsWith('verlassen') ? 'exit' : 'signup'
 }
 
@@ -44,6 +46,9 @@ export function PeerApp() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
+  if (view === 'exit-done') {
+    return <PeerExitDone />
+  }
   if (view === 'exit') {
     return <PeerExitRequest config={config} onSent={(email) => { setExitEmail(email); setView('exit-sent') }} />
   }

@@ -78,3 +78,25 @@ export async function requestPeerExit(input: { email: string; pid: string | null
     // Swallow — the confirmation view is non-revealing and must render either way.
   }
 }
+
+export type ExitConfirmResult = 'done' | 'invalid' | 'expired' | 'error'
+
+/**
+ * Confirm an exit via the one-time token from the exit email (the #/abmelden landing).
+ * Unlike the request step, the outcome may be shown — the token is the secret, held
+ * only by the mailbox owner (DL-086).
+ */
+export async function confirmPeerExit(token: string): Promise<ExitConfirmResult> {
+  try {
+    const res = await fetch(`${BASE}/peer/exit-confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string }
+    if (j.ok) return 'done'
+    return j.reason === 'expired' ? 'expired' : 'invalid'
+  } catch {
+    return 'error'
+  }
+}
