@@ -100,3 +100,62 @@ export async function confirmPeerExit(token: string): Promise<ExitConfirmResult>
     return 'error'
   }
 }
+
+export interface GroupOptinState {
+  ok: boolean
+  open?: boolean
+}
+
+/** Read whether a 2-person group is open to a new member (opt-in-growth, DL-037). */
+export async function groupOptinStatus(gt: string): Promise<GroupOptinState> {
+  try {
+    const res = await fetch(`${BASE}/peer/group-status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gt }),
+    })
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; open?: boolean }
+    return { ok: !!j.ok, open: j.open }
+  } catch {
+    return { ok: false }
+  }
+}
+
+export interface PoolJoinResult {
+  ok: boolean
+  /** true when the click already produced a group (someone was waiting / a group was open). */
+  matched?: boolean
+}
+
+/**
+ * Enter the wait pool via the link from the "your group was dissolved" email (DL-087).
+ * Entering the pool is always the participant's own act — never automatic.
+ */
+export async function joinPool(pt: string): Promise<PoolJoinResult> {
+  try {
+    const res = await fetch(`${BASE}/peer/pool-join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pt }),
+    })
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; matched?: boolean }
+    return { ok: !!j.ok, matched: j.matched }
+  } catch {
+    return { ok: false }
+  }
+}
+
+/** Toggle that flag (the formation email's link, both directions — DL-037 A3). */
+export async function toggleGroupOptin(gt: string): Promise<GroupOptinState> {
+  try {
+    const res = await fetch(`${BASE}/peer/group-optin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gt }),
+    })
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; open?: boolean }
+    return { ok: !!j.ok, open: j.open }
+  } catch {
+    return { ok: false }
+  }
+}

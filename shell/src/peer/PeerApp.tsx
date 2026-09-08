@@ -3,18 +3,24 @@ import { PeerSignup } from './pages/PeerSignup'
 import { PeerExitRequest } from './pages/PeerExitRequest'
 import { PeerExitSent } from './pages/PeerExitSent'
 import { PeerExitDone } from './pages/PeerExitDone'
+import { PeerGroupOptin } from './pages/PeerGroupOptin'
+import { PeerWaitPool } from './pages/PeerWaitPool'
 import { getPeerConfig, type PeerConfig } from './lib/peerApi'
 
-// Peer-group context (DL-053): three pid-only views, no uid, no localStorage. This
+// Peer-group context (DL-053): pid-only views, no uid, no localStorage. The three
+// designed pages (enrol / exit step 1+2) plus the link landings that the emails need —
+// #/abmelden (exit token), #/gruppe (opt-in growth), #/wartepool (wait-pool entry). This
 // app deliberately imports nothing from the Shell's state layer. It ships as its own
 // entry (peer.html) and is deployed to its OWN origin so the browser's per-origin
 // isolation makes the Shell's uid physically unreadable here (the DPO boundary).
 
-type View = 'signup' | 'exit' | 'exit-sent' | 'exit-done'
+type View = 'signup' | 'exit' | 'exit-sent' | 'exit-done' | 'group' | 'waitpool'
 
 function viewFromHash(): View {
   const h = window.location.hash.replace(/^#\/?/, '')
   if (h.startsWith('abmelden')) return 'exit-done' // token-landing from the exit email
+  if (h.startsWith('gruppe')) return 'group' // opt-in-growth landing from the formation email
+  if (h.startsWith('wartepool')) return 'waitpool' // wait-pool landing from the dissolved-group email
   return h.startsWith('verlassen') ? 'exit' : 'signup'
 }
 
@@ -48,6 +54,12 @@ export function PeerApp() {
 
   if (view === 'exit-done') {
     return <PeerExitDone />
+  }
+  if (view === 'group') {
+    return <PeerGroupOptin />
+  }
+  if (view === 'waitpool') {
+    return <PeerWaitPool />
   }
   if (view === 'exit') {
     return <PeerExitRequest config={config} onSent={(email) => { setExitEmail(email); setView('exit-sent') }} />
