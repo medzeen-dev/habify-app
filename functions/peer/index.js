@@ -94,23 +94,46 @@ async function isRateLimited(catalystApp, req) {
   }
 }
 
-// ZeptoMail (EU endpoint). Server-to-server; the token is a secret env var, never in
-// code (DL-086). No-ops (logs) if unconfigured, so Dev without creds still behaves.
-async function sendExitEmail(toEmail, link) {
+/**
+ * Per-cohort mail context: the programme name prefixes every subject, and the contact
+ * address is the "questions" route (the sender is a noreply address). Both already live
+ * on AccessControl (DL-058). Fail-open: without them the mails still send, just without
+ * prefix/footer.
+ */
+async function loadCohortMeta(catalystApp, pid) {
+  const safePid = String(pid || "").replace(/'/g, "");
+  if (!safePid) return { programmName: "", contactEmail: "" };
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      "SELECT programm_name, contact_email FROM AccessControl WHERE pid = '" + safePid + "'"
+    );
+    if (rows && rows.length) {
+      const r = rows[0].AccessControl;
+      return { programmName: r.programm_name || "", contactEmail: r.contact_email || "" };
+    }
+  } catch (e) {
+    console.log("cohort meta skipped:", e && e.message);
+  }
+  return { programmName: "", contactEmail: "" };
+}
+
+function contactFooter(contactEmail) {
+  if (!contactEmail) return "";
+  return '<p style="color:#6a625c;font-size:13px">Diese E-Mail wird automatisch verschickt — bitte antworte nicht darauf. ' +
+    'Bei Fragen wende dich an <a href="mailto:' + contactEmail + '">' + contactEmail + '</a>.</p>';
+}
+
+/**
+ * ZeptoMail (EU endpoint). Server-to-server; the token is a secret env var, never in code
+ * (DL-086). No-ops (logs) if unconfigured, so Dev without creds still behaves.
+ * `meta` carries the cohort's programme name (subject prefix) and contact address (footer).
+ */
+async function zeptoSend(toEmail, subject, htmlbody, meta) {
   const token = process.env.ZEPTOMAIL_TOKEN;
   const from = process.env.ZEPTOMAIL_FROM;
-  if (!token || !from || !PEER_ORIGIN) {
-    console.log("ZeptoMail not configured (ZEPTOMAIL_TOKEN/ZEPTOMAIL_FROM/PEER_ORIGIN) — skipping send.");
-    return;
-  }
-  // Copy is provisional — the peer emails were flagged "not decided, flagged for build"
-  // (15_Technical_Architecture, DL-037). Revisit alongside the DL-035 formation email.
-  const htmlbody =
-    '<p>Du hast angefragt, deine habify30-Peergruppe zu verlassen.</p>' +
-    '<p>Klicke auf den folgenden Link, um dich abzumelden. Erst dann wirst du aus der Gruppe entfernt ' +
-    'und die anderen Gruppenmitglieder werden über deinen Austritt informiert:</p>' +
-    '<p><a href="' + link + '">Abmeldung bestätigen</a></p>' +
-    '<p>Der Link ist ' + TOKEN_TTL_HOURS + ' Stunden gültig. Hast du das nicht angefragt, ignoriere diese E-Mail einfach — es passiert nichts.</p>';
+  const m = meta || {};
+  const fullSubject = m.programmName ? (m.programmName + ": " + subject) : subject;
+  if (!token || !from) { console.log("ZeptoMail not configured — skipping:", fullSubject); return; }
   try {
     const resp = await fetch("https://api.zeptomail.eu/v1.1/email", {
       method: "POST",
@@ -118,8 +141,8 @@ async function sendExitEmail(toEmail, link) {
       body: JSON.stringify({
         from: { address: from, name: "habify30" },
         to: [{ email_address: { address: toEmail } }],
-        subject: "Abmeldung aus deiner Peergruppe bestätigen",
-        htmlbody: htmlbody,
+        subject: fullSubject,
+        htmlbody: htmlbody + contactFooter(m.contactEmail),
       }),
     });
     if (!resp.ok) console.log("ZeptoMail send failed:", resp.status, await resp.text().catch(() => ""));
@@ -128,23 +151,16 @@ async function sendExitEmail(toEmail, link) {
   }
 }
 
-// Generic ZeptoMail send (Phase 2 mails). Same contract as sendExitEmail; no-ops if
-// unconfigured. Copy is provisional — the peer emails were flagged "not decided,
-// flagged for build" (15_Technical_Architecture, DL-037); refine before Prod.
-async function zeptoSend(toEmail, subject, htmlbody) {
-  const token = process.env.ZEPTOMAIL_TOKEN;
-  const from = process.env.ZEPTOMAIL_FROM;
-  if (!token || !from) { console.log("ZeptoMail not configured — skipping:", subject); return; }
-  try {
-    const resp = await fetch("https://api.zeptomail.eu/v1.1/email", {
-      method: "POST",
-      headers: { "Authorization": "Zoho-enczapikey " + token, "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({ from: { address: from, name: "habify30" }, to: [{ email_address: { address: toEmail } }], subject, htmlbody }),
-    });
-    if (!resp.ok) console.log("ZeptoMail send failed:", resp.status, await resp.text().catch(() => ""));
-  } catch (e) {
-    console.log("ZeptoMail send error:", e && e.message);
-  }
+// Exit link mail (DL-053). Needs PEER_ORIGIN for a usable link, so it is skipped without it.
+async function sendExitEmail(toEmail, link, meta) {
+  if (!PEER_ORIGIN) { console.log("PEER_ORIGIN not set — skipping exit mail."); return; }
+  const htmlbody =
+    '<p>Du hast angefragt, deine habify30-Peergruppe zu verlassen.</p>' +
+    '<p>Klicke auf den folgenden Link, um dich abzumelden. Erst dann wirst du aus der Gruppe entfernt ' +
+    'und die anderen Gruppenmitglieder werden über deinen Austritt informiert:</p>' +
+    '<p><a href="' + link + '">Abmeldung bestätigen</a></p>' +
+    '<p>Der Link ist ' + TOKEN_TTL_HOURS + ' Stunden gültig. Hast du das nicht angefragt, ignoriere diese E-Mail einfach.</p>';
+  await zeptoSend(toEmail, "Abmeldung aus deiner Peergruppe bestätigen", htmlbody, meta);
 }
 
 // Fisher–Yates with a CSPRNG (DL-035: fully random assignment).
@@ -166,22 +182,35 @@ function groupSizes(n) {
   return sizes;
 }
 
-// --- Provisional German email copy (flagged; refine before Prod) ---
+// --- German email copy, final version reviewed by Matthias (2026-09-08).
+// Every subject is prefixed with the cohort's programme name and every mail carries the
+// contact-address footer — both added by zeptoSend via `meta` (DL-058 fields). ---
+function channelParagraph() {
+  return "<p>Meldet euch untereinander über eure E-Mail-Adressen und entscheidet euch für einen Kanal, " +
+    "der für euch am besten passt (MS Teams, Messenger-App, Treffen in der Kantine). Kanal und Rhythmus " +
+    "sollten so gewählt sein, dass ihr euch in der Momentumphase über kurze Updates gegenseitig motiviert, dranzubleiben.</p>";
+}
+function optinParagraph(optinLink, intro) {
+  return "<p>" + intro + "</p>" +
+    "<p><a href=\"" + optinLink + "\">Gruppe für neue Mitglieder öffnen/schließen</a></p>" +
+    "<p>Über den gleichen Link könnt ihr eure Gruppe jederzeit wieder schließen.</p>";
+}
 function formationBody(otherEmails, optinLink) {
   const list = otherEmails.map((e) => "<li>" + e + "</li>").join("");
   let body =
     "<p>Deine Peergruppe für die Momentumphase steht — ihr begleitet euch gegenseitig durch die 30 Tage.</p>" +
     "<p>Das sind die anderen aus deiner Gruppe:</p><ul>" + list + "</ul>" +
-    "<p>Meldet euch untereinander und sucht euch einen Kanal, der für euch passt (Teams, WhatsApp, Telefon) — habify30 liest da nicht mit und moderiert nicht.</p>";
+    channelParagraph();
   if (optinLink) {
-    body +=
-      "<p>Ihr seid zu zweit. Wenn ihr offen für ein drittes Mitglied seid, könnt ihr eure Gruppe hier öffnen — und jederzeit wieder schließen:</p>" +
-      "<p><a href=\"" + optinLink + "\">Gruppe für neue Mitglieder öffnen/schließen</a></p>";
+    body += optinParagraph(optinLink,
+      "Aktuell seid ihr zu zweit in dieser Gruppe. Wenn ihr offen für ein drittes Mitglied seid, könnt ihr eure " +
+      "Gruppe hier öffnen — so haben Nachzügler eine bessere Chance, auch noch in einer Gruppe unterzukommen.");
   }
   return body;
 }
 function notEnoughBody() {
-  return "<p>Für deine Peergruppe haben sich diesmal nicht genügend Teilnehmende eingetragen, um eine Gruppe zu bilden. Sobald jemand dazukommt, ordnen wir dich zu und melden uns.</p>";
+  return "<p>Es haben sich noch nicht genügend Teilnehmende auf der Warteliste eingetragen, um eine Gruppe zu bilden. " +
+    "Sobald jemand dazukommt, ordnen wir dich zu und du bekommst eine automatische Benachrichtigung.</p>";
 }
 function exitNotificationBody(optinLink) {
   let body = "<p>Ein Mitglied hat eure habify30-Peergruppe verlassen.</p>" +
@@ -189,9 +218,8 @@ function exitNotificationBody(optinLink) {
   if (optinLink) {
     // 3 → 2: the group is now eligible for opt-in growth but never got a link at
     // formation (only 2-groups did) — it is handed over here (DL-087).
-    body += "<p>Ihr seid jetzt zu zweit. Wenn ihr offen für ein neues drittes Mitglied seid, " +
-      "könnt ihr eure Gruppe hier öffnen — und jederzeit wieder schließen:</p>" +
-      "<p><a href=\"" + optinLink + "\">Gruppe für neue Mitglieder öffnen/schließen</a></p>";
+    body += optinParagraph(optinLink,
+      "Ihr seid jetzt zu zweit. Wenn ihr offen für ein neues drittes Mitglied seid, könnt ihr eure Gruppe hier öffnen.");
   }
   return body;
 }
@@ -208,36 +236,38 @@ function waitPoolInfoBody() {
     "<li>Sobald eine zweite wartende Person da ist, bilden wir aus euch beiden eine Gruppe — auf eine dritte warten wir nicht.</li>" +
     "<li>Öffnet sich in der Zwischenzeit eine bestehende Zweiergruppe für ein neues Mitglied, kommst du dort dazu.</li>" +
     "<li>In beiden Fällen bekommst du sofort eine E-Mail mit den Kontaktdaten deiner Gruppe.</li>" +
-    "<li>Tut sich drei Tage lang nichts, fragen wir bestehende Zweiergruppen, ob sie sich öffnen.</li>" +
+    "<li>Tut sich drei Tage lang nichts, fragen wir bestehende Zweiergruppen, ob sie sich für ein neues Mitglied öffnen.</li>" +
     "</ul><p>Ehrlich gesagt: eine Zuordnung ist nicht garantiert. Trägt sich in diesem Durchlauf niemand mehr ein, " +
-    "kann es diesmal nichts werden. Abmelden kannst du dich jederzeit.</p>";
+    "kann es leider nichts werden. Abmelden von der Warteliste kannst du dich jederzeit.</p>";
 }
 function asyncMatchPairBody(otherEmail, optinLink) {
-  return "<p>Es hat geklappt — du hast eine Peergruppe. Ihr seid zu zweit: jemand hat wie du auf eine Gruppe gewartet.</p>" +
+  let body = "<p>Es hat geklappt — du hast eine Peergruppe. Ihr seid zu zweit: jemand hat wie du auf eine Gruppe gewartet.</p>" +
     "<p>Das ist die andere Person:</p><ul><li>" + otherEmail + "</li></ul>" +
-    "<p>Meldet euch untereinander und sucht euch einen Kanal, der für euch passt (Teams, WhatsApp, Telefon) — " +
-    "habify30 liest da nicht mit und moderiert nicht.</p>" +
-    (optinLink
-      ? "<p>Ihr seid zu zweit. Wenn ihr offen für ein drittes Mitglied seid, könnt ihr eure Gruppe hier öffnen — " +
-        "und jederzeit wieder schließen:</p><p><a href=\"" + optinLink + "\">Gruppe für neue Mitglieder öffnen/schließen</a></p>"
-      : "");
+    channelParagraph();
+  if (optinLink) {
+    body += optinParagraph(optinLink,
+      "Ihr seid zu zweit. Wenn ihr offen für ein drittes Mitglied seid, könnt ihr eure Gruppe hier öffnen.");
+  }
+  return body;
 }
 function asyncMatchJoinBody(otherEmails) {
   const list = otherEmails.map((e) => "<li>" + e + "</li>").join("");
   return "<p>Du bist in eine bestehende Peergruppe aufgenommen worden. Die beiden sind schon ein Stück zusammen unterwegs — du kommst dazu.</p>" +
-    "<p>Das sind sie:</p><ul>" + list + "</ul>" +
-    "<p>Schreib ihnen am besten kurz, damit sie wissen, dass du da bist. Den Kanal legt ihr gemeinsam fest.</p>";
+    "<p>Das sind ihre E-Mail-Adressen:</p><ul>" + list + "</ul>" +
+    "<p>Schreib ihnen am besten direkt, damit sie wissen, dass du da bist und sie dich in ihren Kommunikations-Kanal aufnehmen können.</p>";
 }
 function newMemberBody(newEmail) {
   return "<p>Eure habify30-Peergruppe hat ein neues Mitglied — ihr seid jetzt zu dritt.</p>" +
     "<p>Neu dabei:</p><ul><li>" + newEmail + "</li></ul>" +
-    "<p>Nehmt die Person in euren Kanal auf.</p>";
+    "<p>Nehmt die Person bitte in euren Kommunikations-Kanal auf.</p>";
 }
 function broadcastBody(count, optinLink) {
-  const who = count === 1 ? "wartet eine Person" : ("warten " + count + " Personen");
-  return "<p>Gerade " + who + " auf eine Peergruppe und findet keine.</p>" +
-    "<p>Ihr seid zu zweit. Wenn ihr Platz für eine dritte Person habt, öffnet eure Gruppe hier — " +
-    "wir ordnen dann automatisch jemanden zu:</p>" +
+  const lead = count === 1
+    ? "Gerade wartet eine Person auf eine Peergruppe und findet keine."
+    : ("Gerade warten " + count + " Personen auf eine Peergruppe und finden keine.");
+  return "<p>" + lead + "</p>" +
+    "<p>Ihr seid zu zweit in eurer Gruppe. Wenn ihr euch vorstellen könntet, eine wartende Person aufzunehmen, " +
+    "öffnet eure Gruppe hier — wir ordnen dann automatisch jemanden zu:</p>" +
     "<p><a href=\"" + optinLink + "\">Gruppe für ein neues Mitglied öffnen</a></p>" +
     "<p>Wenn das für euch nicht passt, ignoriere diese E-Mail einfach.</p>";
 }
@@ -247,6 +277,7 @@ function broadcastBody(count, optinLink) {
 // via CohortConfig.formed_time (set by the caller's guard).
 async function formCohort(catalystApp, pid) {
   const safePid = String(pid).replace(/'/g, "");
+  const meta = await loadCohortMeta(catalystApp, safePid);
   const rows = await catalystApp.zcql().executeZCQLQuery(
     "SELECT ROWID, email FROM PeerSignups WHERE pid = '" + safePid + "' AND status = 'enrolled'"
   );
@@ -271,12 +302,12 @@ async function formCohort(catalystApp, pid) {
       for (const m of grp) {
         const others = grp.filter((x) => x.email !== m.email).map((x) => x.email);
         const optinLink = optinToken ? (PEER_ORIGIN + "/peer.html?gt=" + optinToken + "#/gruppe") : null;
-        await zeptoSend(m.email, "Deine habify30-Peergruppe steht", formationBody(others, optinLink));
+        await zeptoSend(m.email, "Deine habify30-Peergruppe steht", formationBody(others, optinLink), meta);
       }
       formedGroups++;
     }
   } else if (members.length === 1) {
-    await zeptoSend(members[0].email, "Peergruppe: diesmal keine Zuteilung", notEnoughBody());
+    await zeptoSend(members[0].email, "Peergruppe: diesmal keine Zuteilung", notEnoughBody(), meta);
   }
 
   // Mark the cohort formed (idempotency guard for the cron).
@@ -335,6 +366,7 @@ function isOpen(g) {
  */
 async function matchCohort(catalystApp, pid) {
   const safePid = String(pid).replace(/'/g, "");
+  const meta = await loadCohortMeta(catalystApp, safePid);
   const signups = catalystApp.datastore().table("PeerSignups");
   const groupsT = catalystApp.datastore().table("PeerGroups");
   let solos = await readSolos(catalystApp, safePid);
@@ -351,8 +383,8 @@ async function matchCohort(catalystApp, pid) {
       await signups.updateRow({ ROWID: m.ROWID, group_id: groupId, status: "grouped", waiting_since: null });
     }
     const optinLink = PEER_ORIGIN + "/peer.html?gt=" + optinToken + "#/gruppe";
-    await zeptoSend(a.email, "Deine habify30-Peergruppe steht", asyncMatchPairBody(b.email, optinLink));
-    await zeptoSend(b.email, "Deine habify30-Peergruppe steht", asyncMatchPairBody(a.email, optinLink));
+    await zeptoSend(a.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(b.email, optinLink), meta);
+    await zeptoSend(b.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(a.email, optinLink), meta);
     paired += 2;
   }
 
@@ -363,9 +395,9 @@ async function matchCohort(catalystApp, pid) {
       if (members.length !== 2) continue; // only 2-groups may grow (DL-035 max size 3)
       await signups.updateRow({ ROWID: solo.ROWID, group_id: g.group_id, status: "grouped", waiting_since: null });
       await groupsT.updateRow({ ROWID: g.ROWID, open_to_new: false }); // now full
-      await zeptoSend(solo.email, "Du bist in eine Peergruppe aufgenommen", asyncMatchJoinBody(members.map((m) => m.email)));
+      await zeptoSend(solo.email, "Du bist in eine Peergruppe aufgenommen", asyncMatchJoinBody(members.map((m) => m.email)), meta);
       for (const m of members) {
-        await zeptoSend(m.email, "Eure Peergruppe hat ein neues Mitglied", newMemberBody(solo.email));
+        await zeptoSend(m.email, "Eure Peergruppe hat ein neues Mitglied", newMemberBody(solo.email), meta);
       }
       solos = [];
       absorbed = 1;
@@ -402,13 +434,14 @@ async function broadcastIfDue(catalystApp, cohort) {
   });
   if (overdue.length === 0) return { sent: 0 };
 
+  const meta = await loadCohortMeta(catalystApp, safePid);
   let sent = 0;
   for (const g of (await readGroups(catalystApp, safePid)).filter((x) => x.optin_token && !isOpen(x))) {
     const members = await membersOf(catalystApp, g.group_id);
     if (members.length !== 2) continue;
     const link = PEER_ORIGIN + "/peer.html?gt=" + g.optin_token + "#/gruppe";
     for (const m of members) {
-      await zeptoSend(m.email, "Jemand wartet auf eine Peergruppe", broadcastBody(solos.length, link));
+      await zeptoSend(m.email, "Jemand wartet auf eine Peergruppe", broadcastBody(solos.length, link), meta);
     }
     sent++;
   }
@@ -507,7 +540,8 @@ app.post("/enrol", async (req, res) => {
       await table.updateRow({ ROWID: rowId, waiting_since: catalystNow(0) });
       const m = await matchCohort(catalystApp, safePid);
       if (m.waiting.indexOf(email) !== -1) {
-        await zeptoSend(email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody());
+        const meta = await loadCohortMeta(catalystApp, safePid);
+        await zeptoSend(email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
       }
     }
     res.status(200).json({ status: "ok", ok: true });
@@ -533,7 +567,7 @@ app.post("/exit-request", async (req, res) => {
 
   try {
     const rows = await catalystApp.zcql().executeZCQLQuery(
-      "SELECT ROWID, status FROM PeerSignups WHERE email = '" + safeEmail + "'" + pidClause
+      "SELECT ROWID, status, pid FROM PeerSignups WHERE email = '" + safeEmail + "'" + pidClause
     );
     // Any active membership can exit — `enrolled` (pre-formation / wait-pool) as well as
     // `grouped` (after the DL-035 cutoff). Only an already-`exited` row is skipped.
@@ -543,7 +577,8 @@ app.post("/exit-request", async (req, res) => {
       await catalystApp.datastore().table("PeerSignups").updateRow({
         ROWID: enrolled.ROWID, exit_token: rawToken, exit_token_expiry: catalystNow(TOKEN_TTL_HOURS * 3600 * 1000),
       });
-      await sendExitEmail(email, PEER_ORIGIN + "/peer.html?token=" + rawToken + "#/abmelden");
+      const meta = await loadCohortMeta(catalystApp, enrolled.pid);
+      await sendExitEmail(email, PEER_ORIGIN + "/peer.html?token=" + rawToken + "#/abmelden", meta);
     }
   } catch (err) {
     console.log(err); // swallow — response stays non-revealing
@@ -559,7 +594,7 @@ app.post("/exit-confirm", async (req, res) => {
 
   try {
     const rows = await catalystApp.zcql().executeZCQLQuery(
-      "SELECT ROWID, status, exit_token_expiry, group_id FROM PeerSignups WHERE exit_token = '" + token + "'"
+      "SELECT ROWID, status, exit_token_expiry, group_id, pid FROM PeerSignups WHERE exit_token = '" + token + "'"
     );
     if (!rows || rows.length === 0) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
     const row = rows[0].PeerSignups;
@@ -583,6 +618,7 @@ app.post("/exit-confirm", async (req, res) => {
     if (groupId) {
       try {
         const safeGid = String(groupId).replace(/'/g, "");
+        const meta = await loadCohortMeta(catalystApp, row.pid);
         const remaining = await membersOf(catalystApp, safeGid);
         const groupRows = await catalystApp.zcql().executeZCQLQuery(
           "SELECT ROWID, optin_token FROM PeerGroups WHERE group_id = '" + safeGid + "'"
@@ -597,7 +633,7 @@ app.post("/exit-confirm", async (req, res) => {
           });
           if (grp) await catalystApp.datastore().table("PeerGroups").deleteRow(grp.ROWID);
           await zeptoSend(last.email, "Deine Peergruppe wurde aufgelöst",
-            dissolvedBody(PEER_ORIGIN + "/peer.html?pt=" + poolToken + "#/wartepool"));
+            dissolvedBody(PEER_ORIGIN + "/peer.html?pt=" + poolToken + "#/wartepool"), meta);
         } else {
           let optinLink = null;
           if (remaining.length === 2 && grp) {
@@ -609,7 +645,7 @@ app.post("/exit-confirm", async (req, res) => {
             optinLink = PEER_ORIGIN + "/peer.html?gt=" + tok + "#/gruppe";
           }
           for (const o of remaining) {
-            await zeptoSend(o.email, "Ein Mitglied hat eure Peergruppe verlassen", exitNotificationBody(optinLink));
+            await zeptoSend(o.email, "Ein Mitglied hat eure Peergruppe verlassen", exitNotificationBody(optinLink), meta);
           }
         }
       } catch (notifyErr) {
@@ -719,7 +755,8 @@ app.post("/pool-join", async (req, res) => {
     const m = await matchCohort(catalystApp, safePid);
     const stillWaiting = m.waiting.indexOf(String(row.email).toLowerCase()) !== -1;
     if (stillWaiting) {
-      await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody());
+      const meta = await loadCohortMeta(catalystApp, safePid);
+      await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
     }
     res.status(200).json({ status: "ok", ok: true, matched: !stillWaiting });
   } catch (err) {

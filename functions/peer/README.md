@@ -123,6 +123,9 @@ secret is never a query string). Both were verified once via *Submit Job* → HT
 
 **Prod still needs the same setup** — job pool, both crons, and the env vars.
 
-## Still open
-All email copy is **provisional** German drafting and wants a review pass before Prod
-(DL-037 "flagged for build"; the full artifact list is in DL-087 and `EMAILS.md`).
+## Email copy
+Final as of 2026-09-08 (reviewed by Matthias) — the readable mirror of all ten artifacts
+is `EMAILS.md`; the strings in `index.js` are the technical source of truth. Every subject
+is prefixed with the cohort's `programm_name` and every mail carries a footer pointing at
+`contact_email` (both from `AccessControl`, DL-058) — added centrally in `zeptoSend`.
+Set `ZEPTOMAIL_FROM` to **`noreply.habify30@k-a-d-o.com`**.
