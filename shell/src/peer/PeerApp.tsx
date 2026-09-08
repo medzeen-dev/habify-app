@@ -10,9 +10,11 @@ import { getPeerConfig, type PeerConfig } from './lib/peerApi'
 // Peer-group context (DL-053): pid-only views, no uid, no localStorage. The three
 // designed pages (enrol / exit step 1+2) plus the link landings that the emails need —
 // #/abmelden (exit token), #/gruppe (opt-in growth), #/wartepool (wait-pool entry). This
-// app deliberately imports nothing from the Shell's state layer. It ships as its own
-// entry (peer.html) and is deployed to its OWN origin so the browser's per-origin
-// isolation makes the Shell's uid physically unreadable here (the DPO boundary).
+// app deliberately imports nothing from the Shell's state layer. It is built on its own
+// (`npm run build:peer`, peer.html emitted as that app's index.html) and deployed to its
+// OWN origin — peer.habify30.k-a-d-o.com — so the browser's per-origin isolation makes
+// the Shell's uid physically unreadable here (the DPO boundary, DL-086). The Shell is
+// never deployed to that origin; that is what keeps the boundary structural.
 
 type View = 'signup' | 'exit' | 'exit-sent' | 'exit-done' | 'group' | 'waitpool'
 

@@ -70,7 +70,15 @@ The same tab's **Function Triggers** block is where the formation Cron is config
 Set on **`peer`**: `ADMIN_KEY`, `ZEPTOMAIL_TOKEN`, `ZEPTOMAIL_FROM`, `PEER_ORIGIN`.
 Set on **`accesscontrol`**: `PEER_ORIGIN` as well — it needs the peer origin in its own
 CORS allowlist. Secrets go in the console, never in git.
-- `PEER_ORIGIN` — the peer pages' own origin, e.g. `https://peer.habify30.k-a-d-o.com`.
+- `PEER_ORIGIN` — the peer pages' own origin. No trailing slash; links are built as
+  `PEER_ORIGIN + "/?token=…"`. Per environment, because Development and Production are
+  separate Slate apps:
+  - Development: **`https://peer-dev.habify30.k-a-d-o.com`** — live since 2026-09-08,
+    Slate app `peerpages`, deployment `default`.
+  - Production: **`https://peer.habify30.k-a-d-o.com`** — reserved, not yet created.
+  Both follow the existing `api.habify30.k-a-d-o.com` pattern. Setting up a further
+  environment: see Catalyst_Platform_Capabilities.md Cluster E3 in the habify repo — the
+  ownership record must be the TXT variant; the CNAME variant Catalyst offers is broken.
   Used for CORS (here **and** in `accesscontrol`) and to build the exit link. In Dev the
   localhost regex covers the browser; set this before Prod.
 - `ZEPTOMAIL_TOKEN` — ZeptoMail Send-Mail API key (**secret**). Without it, `/exit-request`
@@ -84,7 +92,7 @@ CORS allowlist. Secrets go in the console, never in git.
 whose `formed_time` is still empty (idempotent). Wire a **Catalyst Cron** to call it
 daily with `{ "key": "<ADMIN_KEY>" }` in the body. Manual/testing: `{ "key": …, "pid":
 "<pid>", "force": true }` forms one named cohort regardless of cutoff. The opt-in link
-in the formation email points at `PEER_ORIGIN/peer.html?gt=<token>#/gruppe`.
+in the formation email points at `PEER_ORIGIN/?gt=<token>#/gruppe`.
 
 ## Deploy (host terminal)
 1. Create the Data Store tables above (Development first).
@@ -93,8 +101,15 @@ in the formation email points at `PEER_ORIGIN/peer.html?gt=<token>#/gruppe`.
    ZeptoMail's EU endpoint + DPA are confirmed — OQ-037).
 3. `catalyst deploy` (functions target `peer`; `accesscontrol` is also updated — it now
    returns `capabilities` and allows the peer origin).
-4. Deploy the peer frontend entry (`dist/peer.html` + assets) to its **own** Slate app /
-   subdomain = `PEER_ORIGIN` (DL-086 origin isolation).
+4. Build and deploy the peer frontend **separately**: `npm run build:peer` in `shell/`
+   produces `dist-peer/` (peer entry only, emitted as `index.html`), which goes to its
+   **own** Slate app on `PEER_ORIGIN`. The Shell build (`npm run build` → `dist/`) goes to
+   the main app and contains no peer entry. Never deploy one output to both origins — a
+   Shell reachable under `PEER_ORIGIN` could write its own `h30.state` there and would
+   turn DL-086's structural isolation back into a code convention.
+   Set `VITE_API_BASE` for the peer build as well; it calls the gateway cross-origin (the
+   `/api` dev proxy is dev-only), so `PEER_ORIGIN` must be an Authorized Domain on the
+   gateway (DL-082) in addition to being set as an env var on `peer` and `accesscontrol`.
 
 ## Matching order (DL-037, precedence per DL-087)
 1. **Pair two solos** into a new 2-group as soon as two are available — no waiting for a

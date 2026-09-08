@@ -301,7 +301,7 @@ async function formCohort(catalystApp, pid) {
       }
       for (const m of grp) {
         const others = grp.filter((x) => x.email !== m.email).map((x) => x.email);
-        const optinLink = optinToken ? (PEER_ORIGIN + "/peer.html?gt=" + optinToken + "#/gruppe") : null;
+        const optinLink = optinToken ? (PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe") : null;
         await zeptoSend(m.email, "Deine habify30-Peergruppe steht", formationBody(others, optinLink), meta);
       }
       formedGroups++;
@@ -382,7 +382,7 @@ async function matchCohort(catalystApp, pid) {
     for (const m of [a, b]) {
       await signups.updateRow({ ROWID: m.ROWID, group_id: groupId, status: "grouped", waiting_since: null });
     }
-    const optinLink = PEER_ORIGIN + "/peer.html?gt=" + optinToken + "#/gruppe";
+    const optinLink = PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe";
     await zeptoSend(a.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(b.email, optinLink), meta);
     await zeptoSend(b.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(a.email, optinLink), meta);
     paired += 2;
@@ -439,7 +439,7 @@ async function broadcastIfDue(catalystApp, cohort) {
   for (const g of (await readGroups(catalystApp, safePid)).filter((x) => x.optin_token && !isOpen(x))) {
     const members = await membersOf(catalystApp, g.group_id);
     if (members.length !== 2) continue;
-    const link = PEER_ORIGIN + "/peer.html?gt=" + g.optin_token + "#/gruppe";
+    const link = PEER_ORIGIN + "/?gt=" + g.optin_token + "#/gruppe";
     for (const m of members) {
       await zeptoSend(m.email, "Jemand wartet auf eine Peergruppe", broadcastBody(solos.length, link), meta);
     }
@@ -578,7 +578,7 @@ app.post("/exit-request", async (req, res) => {
         ROWID: enrolled.ROWID, exit_token: rawToken, exit_token_expiry: catalystNow(TOKEN_TTL_HOURS * 3600 * 1000),
       });
       const meta = await loadCohortMeta(catalystApp, enrolled.pid);
-      await sendExitEmail(email, PEER_ORIGIN + "/peer.html?token=" + rawToken + "#/abmelden", meta);
+      await sendExitEmail(email, PEER_ORIGIN + "/?token=" + rawToken + "#/abmelden", meta);
     }
   } catch (err) {
     console.log(err); // swallow — response stays non-revealing
@@ -633,7 +633,7 @@ app.post("/exit-confirm", async (req, res) => {
           });
           if (grp) await catalystApp.datastore().table("PeerGroups").deleteRow(grp.ROWID);
           await zeptoSend(last.email, "Deine Peergruppe wurde aufgelöst",
-            dissolvedBody(PEER_ORIGIN + "/peer.html?pt=" + poolToken + "#/wartepool"), meta);
+            dissolvedBody(PEER_ORIGIN + "/?pt=" + poolToken + "#/wartepool"), meta);
         } else {
           let optinLink = null;
           if (remaining.length === 2 && grp) {
@@ -642,7 +642,7 @@ app.post("/exit-confirm", async (req, res) => {
               tok = crypto.randomBytes(16).toString("hex");
               await catalystApp.datastore().table("PeerGroups").updateRow({ ROWID: grp.ROWID, optin_token: tok });
             }
-            optinLink = PEER_ORIGIN + "/peer.html?gt=" + tok + "#/gruppe";
+            optinLink = PEER_ORIGIN + "/?gt=" + tok + "#/gruppe";
           }
           for (const o of remaining) {
             await zeptoSend(o.email, "Ein Mitglied hat eure Peergruppe verlassen", exitNotificationBody(optinLink), meta);
