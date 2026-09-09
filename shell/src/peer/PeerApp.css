@@ -40,7 +40,11 @@
    Gruppierung im Layout nichts verschiebt. */
 .h30-peer__form:disabled { opacity: 0.4; }
 
-/* Exit-confirmation: mirrored address block. */
+/* Exit-confirmation: mirrored address block. Eigene Flaeche laut Figma (1:303). */
+.h30-peer__mirror {
+  background: var(--color-bg-brand-subtle); border-radius: var(--radius-12);
+  padding: var(--space-4) var(--space-5);
+}
 .h30-peer__mirror-label { color: var(--color-text-muted); margin: 0 0 var(--space-1); }
 .h30-peer__mirror-email { color: var(--color-text-primary); margin: 0; word-break: break-all; }
 
