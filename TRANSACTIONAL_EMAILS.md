@@ -1,20 +1,50 @@
-# Peergruppen-E-Mails — finale Copy
+# Transaktionale E-Mails
 
-Alle zehn Mail-Artefakte des Peergruppen-Features (DL-087 listet sie vollständig).
-**Von Matthias am 2026-09-08 final abgenommen** und in `functions/peer/index.js`
-übertragen — der Code bleibt die technische Quelle der Wahrheit, diese Datei ist der
-lesbare Spiegel. (Solange beide auseinanderlaufen, gilt der Code.)
+Jede E-Mail, die das System an Teilnehmende verschickt — vollständig, mit Auslöser,
+Empfänger und Quelle. **Der Code bleibt die technische Quelle der Wahrheit**
+(`functions/<funktion>/index.js`); diese Datei ist der lesbare Spiegel. Laufen beide
+auseinander, gilt der Code.
+
+**Stand: elf Mails, alle aus der Funktion `peer`.** `recovery` und `zohoformswebhook`
+verschicken heute nichts. Kommt eine weitere versendende Funktion dazu, bekommt sie hier
+einen eigenen Abschnitt — die Nummerierung unten ist die Reihenfolge der Aufnahme, nicht
+die des Teilnehmerwegs. Den Weg zeigt der Index.
 
 Platzhalter in `{geschweiften Klammern}` werden zur Laufzeit ersetzt.
 
-**Gilt für alle zehn Mails:**
+## Index
+
+Nach dem Teilnehmerweg geordnet, nicht nach Abschnittsnummer.
+
+| Mail | Betreff | Wann | An wen |
+|---|---|---|---|
+| [11](#11-eintragungs-bestätigung-double-opt-in) | Bitte bestätige deine Eintragung für die Peergruppe | Formular abgeschickt | die eingetragene Adresse |
+| [2](#2-formierungsmail-stichtag) | Deine habify30-Peergruppe steht | Gruppenbildung am Stichtag | jedes Gruppenmitglied |
+| [3](#3-nicht-genug-anmeldungen) | Peergruppe: diesmal keine Zuteilung | am Stichtag nur eine Person | diese Person |
+| [6](#6-wartelisten-info) | Du stehst auf der Warteliste für eine Peergruppe | Eintritt in den Wartepool ohne sofortige Zuordnung | diese Person |
+| [7](#7-async-match-a--zwei-wartende-werden-ein-paar) | Geschafft - deine habify30-Peergruppe steht nun fest | zwei Wartende werden ein Paar | beide |
+| [8](#8-async-match-b--beitritt-zu-einer-bestehenden-gruppe) | Du bist in eine Peergruppe aufgenommen | Aufnahme in eine offene Zweiergruppe | die dazukommende Person |
+| [9](#9-neues-mitglied-an-die-bestehende-gruppe) | Eure Peergruppe hat ein neues Mitglied | derselbe Vorgang wie 8 | die bestehenden Mitglieder |
+| [10](#10-3-tage-broadcast) | Jemand wartet auf eine Peergruppe | jemand wartet ≥ 3 Tage | noch geschlossene Zweiergruppen |
+| [1](#1-austritts-bestätigung) | Abmeldung aus deiner Peergruppe bestätigen | Abmeldelink angefordert | die eingegebene Adresse |
+| [4](#4-austritts-benachrichtigung-an-die-verbleibenden) | Ein Mitglied hat eure Peergruppe verlassen | Austritt bestätigt | die verbleibenden Mitglieder |
+| [5](#5-gruppe-aufgelöst--wartepool-link) | Deine Peergruppe wurde aufgelöst | Zweiergruppe schrumpft auf eine Person | die zurückgebliebene Person |
+
+## Gilt für alle Mails
+
 - **Betreff** wird automatisch mit dem Programmnamen der Kohorte präfixt:
   `{program_name}: <Betreff>` (aus `AccessControl.programm_name`).
 - **Fußzeile** in jeder Mail: Hinweis, dass es eine automatische Nachricht ist, plus
   `AccessControl.contact_email` als Adresse für Rückfragen.
-- **Absender:** `noreply.habify30@k-a-d-o.com` (als `ZEPTOMAIL_FROM` zu setzen).
-Fehlen Programmname oder Kontaktadresse in der Kohorte, wird die Mail trotzdem
-verschickt — nur ohne Präfix bzw. ohne Fußzeile.
+- **Absender:** `noreply.habify30@k-a-d-o.com` (als `ZEPTOMAIL_FROM` gesetzt).
+- Fehlen Programmname oder Kontaktadresse in der Kohorte, wird die Mail trotzdem
+  verschickt — nur ohne Präfix bzw. ohne Fußzeile.
+
+## Abnahmestand
+
+Mails **1–10** wurden von Matthias am 2026-09-08 final abgenommen. Mail **11** ist am
+2026-09-09 mit dem Double-Opt-In entstanden, ist im Wortlaut von mir und **noch nicht
+abgenommen**.
 
 ---
 
@@ -172,6 +202,26 @@ verschickt — nur ohne Präfix bzw. ohne Fußzeile.
 > Wenn das für euch nicht passt, ignoriere diese E-Mail einfach.
 
 ---
+
+---
+
+## 11. Eintragungs-Bestätigung (Double Opt-In)
+**Auslöser:** jemand schickt das Eintragungsformular ab
+**Empfänger:** die eingetragene Adresse · **Quelle:** DL-090
+**Betreff:** Bitte bestätige deine Eintragung für die Peergruppe
+
+> Fast geschafft — es fehlt nur noch deine Bestätigung.
+>
+> **[Eintragung bestätigen]({link})**
+>
+> **Ohne diesen Klick wirst du keiner Peergruppe zugeteilt.** Wir bestätigen so, dass die Adresse wirklich dir gehört — sonst könnte ein Tippfehler dazu führen, dass deine Gruppendaten an eine fremde Person gehen. *(Nur solange die Kohorte noch nicht gebildet ist:)* Die Zuteilung erfolgt am {stichtag}.
+>
+> Der Link ist 7 Tage gültig. Hast du das nicht angefragt, ignoriere diese E-Mail einfach — ohne Bestätigung passiert nichts.
+
+*(Diese Mail geht jedem Eintrag voraus: bis sie bestätigt ist, steht die Adresse auf
+`pending` und kann keiner Gruppe zugeteilt werden. Der Stichtag-Satz entfällt für
+Nachzügler, die nach der Gruppenbildung bestätigen — die kommen in den Wartepool und
+bekommen danach Mail 6. Wortlaut noch nicht abgenommen.)*
 
 ## Beim Übertragen still korrigiert
 - `MMeldet` → `Meldet` (Mail 7) · „eine besser Chance" → „eine bessere Chance" (Mail 2) ·

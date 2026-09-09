@@ -32,14 +32,26 @@ export function PeerExitDone() {
     )
   }
 
-  if (state === 'done') {
+  // Two successful outcomes, because two different things happened. Leaving a formed group
+  // does notify the remaining members (DL-037: a 3-group shrinks and is told, a 2-group is
+  // dissolved and its last member is mailed). Leaving before the cutoff, or from the wait
+  // pool, notifies nobody — there is no group yet. The old wording claimed the notification
+  // unconditionally and so described an email that, in that case, was never sent.
+  if (state === 'done-group' || state === 'done-nogroup') {
     return (
       <PeerLayout>
         <h1 className="t-display h30-peer__title">Du bist abgemeldet</h1>
-        <p className="t-body-lg h30-peer__intro">
-          Deine Adresse wurde aus der Peergruppe entfernt. Die anderen Gruppenmitglieder werden über deinen Austritt
-          informiert.
-        </p>
+        {state === 'done-group' ? (
+          <p className="t-body-lg h30-peer__intro">
+            Deine Adresse wurde aus der Peergruppe entfernt. Die anderen Gruppenmitglieder werden über deinen Austritt
+            informiert.
+          </p>
+        ) : (
+          <p className="t-body-lg h30-peer__intro">
+            Deine Adresse wurde von der Liste genommen. Du warst noch keiner Gruppe zugeteilt, es muss also niemand
+            informiert werden.
+          </p>
+        )}
         <p className="t-body-md h30-peer__note">
           Möchtest du dich später erneut eintragen, findest du den Link unter Einstellungen in deinem Kurs.
         </p>

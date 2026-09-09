@@ -23,7 +23,7 @@
   align-items: center;
   justify-content: center;
   border: 1.5px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-4);
   background: var(--color-bg-surface);
   color: var(--color-text-on-brand);
 }

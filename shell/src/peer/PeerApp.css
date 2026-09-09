@@ -15,7 +15,7 @@
 
 /* Assignment explanation — three "Fakt" cards, one bordered container. */
 .h30-peer__facts {
-  border: 1px solid var(--color-border-default); border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-default); border-radius: var(--radius-12);
   background: var(--color-bg-surface);
 }
 .h30-peer__fact { display: flex; gap: var(--space-4); padding: var(--space-5); }
@@ -28,11 +28,39 @@
 .h30-peer__consent { margin-top: var(--space-1); }
 .h30-peer__cta { margin-top: var(--space-1); }
 
+/* Der Eingabeteil als fieldset: `disabled` sperrt alle Felder darin auf einmal und ist die
+   Zusage, die auch Screenreader und Tastatur verstehen — die Opazitaet allein waere nur
+   Optik. */
+.h30-peer__form {
+  border: 0; padding: 0; margin: 0; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--space-5);
+}
+/* Nicht `display: contents` — ein Element ohne eigene Box kann keine Opazitaet tragen,
+   die Sperre waere dann unsichtbar. Der Abstand entspricht dem der Spalte, damit die
+   Gruppierung im Layout nichts verschiebt. */
+.h30-peer__form:disabled { opacity: 0.4; }
+
 /* Exit-confirmation: mirrored address block. */
 .h30-peer__mirror-label { color: var(--color-text-muted); margin: 0 0 var(--space-1); }
 .h30-peer__mirror-email { color: var(--color-text-primary); margin: 0; word-break: break-all; }
 
 @media (max-width: 900px) {
   .h30-peer__content { padding: 24px 20px 48px; }
-  .h30-peer__fact { padding: var(--space-4); }
+
+  /* Mobile weicht hier bewusst vom Desktop ab (Figma 1:310 / 1:330): aus dem einen
+     Container mit Trennlinien werden drei eigenstaendige Karten, und das Icon steht
+     ueber dem Text statt daneben. Nebeneinander kostet auf 350px Breite zu viel Platz —
+     der Fliesstext bekaeme nur noch rund 280px. */
+  .h30-peer__facts {
+    border: 0; border-radius: 0; background: none;
+    display: flex; flex-direction: column; gap: var(--space-4);
+  }
+  .h30-peer__fact {
+    flex-direction: column; gap: var(--space-3); padding: var(--space-4);
+    border: 1px solid var(--color-border-default); border-radius: var(--radius-12);
+    background: var(--color-bg-surface);
+  }
+  /* Die Trennlinie der Desktop-Liste entfaellt: jede Karte traegt ihren eigenen Rahmen. */
+  .h30-peer__fact + .h30-peer__fact { border-top-width: 1px; }
+  .h30-peer__fact-icon { margin-top: 0; }
 }

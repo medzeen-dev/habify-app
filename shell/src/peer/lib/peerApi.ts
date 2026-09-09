@@ -19,6 +19,12 @@ export interface PeerConfig {
   exceptions: string[]
   /** ISO date of the Momentum-matching cutoff (DL-035/048), shown as {stichtag}. */
   cutoffDate?: string
+  /** True once the cohort has been formed. Whoever enrols after that is a late joiner
+   *  and enters the wait pool instead of the cutoff allocation (DL-037), so the
+   *  enrolment confirmation has to promise them something different. Server-side
+   *  `formed_time` is the authority — not a date comparison here, because formation and
+   *  cutoff come apart whenever a cohort is formed early or late. */
+  groupsFormed: boolean
 }
 
 interface AccessControlLike {
@@ -27,6 +33,7 @@ interface AccessControlLike {
     allowedEmailDomains?: string[]
     manualDomainExceptions?: string[]
     peerGroupCutoffDate?: string
+    peerGroupFormed?: boolean
   }
 }
 
@@ -43,6 +50,7 @@ export async function getPeerConfig(pid: string): Promise<PeerConfig> {
     allowedDomains: c.allowedEmailDomains ?? [],
     exceptions: c.manualDomainExceptions ?? [],
     cutoffDate: c.peerGroupCutoffDate,
+    groupsFormed: c.peerGroupFormed === true,
   }
 }
 
@@ -79,7 +87,10 @@ export async function requestPeerExit(input: { email: string; pid: string | null
   }
 }
 
-export type ExitConfirmResult = 'done' | 'invalid' | 'expired' | 'error'
+/** `done-group` and `done-nogroup` are both successful exits; they differ only in what the
+ *  landing page may say. Someone who left a formed group has fellow members who get
+ *  notified; someone who left before the cutoff, or from the wait pool, does not. */
+export type ExitConfirmResult = 'done-group' | 'done-nogroup' | 'invalid' | 'expired' | 'error'
 
 /**
  * Confirm an exit via the one-time token from the exit email (the #/abmelden landing).
@@ -93,8 +104,39 @@ export async function confirmPeerExit(token: string): Promise<ExitConfirmResult>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token }),
     })
-    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string }
-    if (j.ok) return 'done'
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string; hadGroup?: boolean }
+    if (j.ok) return j.hadGroup === true ? 'done-group' : 'done-nogroup'
+    return j.reason === 'expired' ? 'expired' : 'invalid'
+  } catch {
+    return 'error'
+  }
+}
+
+/** `pending` until the link in the confirmation email is clicked (double opt-in). The
+ *  two success shapes differ only in what the landing may say: `confirmed-allocated` is
+ *  on the list for the cutoff allocation, `confirmed-waiting` confirmed after the cohort
+ *  was already formed and is therefore in the wait pool (DL-037). */
+export type EnrolConfirmResult =
+  | 'confirmed-allocated'
+  | 'confirmed-waiting'
+  | 'invalid'
+  | 'expired'
+  | 'error'
+
+/**
+ * Confirm an enrolment via the one-time token from the confirmation email (the
+ * #/bestaetigen landing). The outcome may be shown for the same reason the exit outcome
+ * may (DL-086): the token is the secret and is held only by the mailbox owner.
+ */
+export async function confirmPeerEnrol(token: string): Promise<EnrolConfirmResult> {
+  try {
+    const res = await fetch(`${BASE}/peer/enrol-confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    const j = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string; waiting?: boolean }
+    if (j.ok) return j.waiting === true ? 'confirmed-waiting' : 'confirmed-allocated'
     return j.reason === 'expired' ? 'expired' : 'invalid'
   } catch {
     return 'error'

@@ -146,7 +146,7 @@
   .h30-nav__tab:focus-visible {
     outline: 2px solid var(--color-text-brand);
     outline-offset: 2px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-4);
   }
   .h30-nav__lock {
     color: var(--color-text-muted);
@@ -176,7 +176,7 @@
   .h30-nav__gear:focus-visible {
     outline: 2px solid var(--color-text-brand);
     outline-offset: 2px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-4);
   }
   .h30-nav__client-slot {
     width: 114px;

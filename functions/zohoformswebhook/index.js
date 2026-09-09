@@ -7,16 +7,18 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "https://habify30.k-a-d-o.com");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") {
-    res.sendStatus(200);
-    return;
-  }
-  next();
-});
+// No CORS handling here — on purpose (DL-089). Two reasons, and the second is the one
+// that makes it necessary rather than merely tidy:
+//
+// This is a webhook. Zoho Forms calls it server-to-server, so no browser ever needs a CORS
+// header from it and the block was decoration from the start.
+//
+// But Authorized Domains are a **project** setting, not a per-function one. Once the Shell
+// origin is registered — which it must be — the gateway stamps
+// Access-Control-Allow-Origin on this function's responses too, for any request carrying
+// that Origin. A header set here would then be a duplicate, and browsers reject a response
+// with two of them even when the values match. Leaving it would plant a fault that only
+// appears once an unrelated origin is authorised somewhere else.
 
 app.get("/", (req, res) => {
   res.status(200).json({ status: "ok", message: "zohoformswebhook is live" });
@@ -24,7 +26,7 @@ app.get("/", (req, res) => {
 
 app.post("/", (req, res) => {
 
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
 
   const body = req.body || {};
   const pid = body.pid;

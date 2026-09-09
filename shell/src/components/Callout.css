@@ -1,0 +1,19 @@
+/* Callout (DS). Flaeche und Titel tragen dasselbe Statuspaar; der Fliesstext bleibt auf
+   color/text/primary, weil eingefaerbter Fliesstext schlechter lesbar ist als die
+   Statusfarbe im Titel suggeriert. */
+.h30-callout {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-5); border-radius: var(--radius-12);
+  border: 1px solid transparent;
+}
+.h30-callout__title { margin: 0; }
+.h30-callout__text { color: var(--color-text-primary); margin: 0; }
+
+.h30-callout--error { background: var(--color-status-error-bg); border-color: var(--color-border-error); }
+.h30-callout--error .h30-callout__title { color: var(--color-status-error-fg); }
+
+.h30-callout--success { background: var(--color-status-success-bg); border-color: var(--color-text-success); }
+.h30-callout--success .h30-callout__title { color: var(--color-status-success-fg); }
+
+.h30-callout--neutral { background: var(--color-status-neutral-bg); border-color: var(--color-border-default); }
+.h30-callout--neutral .h30-callout__title { color: var(--color-status-neutral-fg); }

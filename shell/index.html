@@ -8,6 +8,87 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Stale-cache guard. Must stay INLINE and identical in index.html and peer.html
+         (a shared file would be a second request that can 404 just like the bundle).
+
+         Why it exists: Slate serves index.html with a one-year cache-control, and hashed
+         asset names do not mitigate that - they protect the assets, not the HTML that
+         names them (Catalyst_Platform_Capabilities.md A5). A returning browser can hold
+         HTML pointing at a bundle the last deploy deleted, and then NOTHING of the app
+         runs: any check inside the bundle sits in the very file that failed to load.
+         This script is part of the cached HTML itself, so it is the only code still
+         executing in that situation.
+
+         Reach: it helps only browsers whose cached HTML already contains it, so it
+         protects from the next deploy onward, never retroactively - the same property as
+         the cache setting itself (DL-091). habify30 currently runs with caching disabled,
+         which makes this belt and braces; it stays because it is what catches the failure
+         if caching is switched back on or Slate changes its defaults. -->
+    <script>
+      (function () {
+        var shown = false
+        function notice() {
+          if (shown) return
+          shown = true
+          var bar = document.createElement('div')
+          bar.setAttribute('role', 'alert')
+          bar.style.cssText =
+            'position:fixed;inset:0 0 auto 0;z-index:2147483647;padding:16px 20px;' +
+            'background:#1d1d1f;color:#fff;font:15px/1.5 system-ui,sans-serif;' +
+            'display:flex;gap:16px;align-items:center;flex-wrap:wrap'
+          var text = document.createElement('span')
+          text.textContent =
+            'Diese Seite ist veraltet und konnte nicht vollständig geladen werden. Bitte lade sie neu.'
+          var btn = document.createElement('button')
+          btn.textContent = 'Neu laden'
+          btn.style.cssText =
+            'padding:8px 16px;border:0;border-radius:6px;background:#fff;color:#1d1d1f;' +
+            'font:inherit;font-weight:600;cursor:pointer'
+          // NOT location.reload() - that may be answered from the same cache entry. A
+          // changed query string is a different cache key, which is what actually forces
+          // a fresh fetch (measured). new URL keeps the hash, so the token routes
+          // (/?token=...#/abmelden and friends) survive the reload.
+          btn.onclick = function () {
+            try {
+              var u = new URL(window.location.href)
+              u.searchParams.set('_v', Date.now())
+              window.location.replace(u.toString())
+            } catch (e) {
+              window.location.reload()
+            }
+          }
+          bar.appendChild(text)
+          bar.appendChild(btn)
+          document.body.appendChild(bar)
+        }
+        // Resource errors do not bubble - they must be caught in the capture phase.
+        window.addEventListener(
+          'error',
+          function (e) {
+            var t = e.target
+            if (t && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) notice()
+          },
+          true,
+        )
+        // A code-split chunk that 404s does NOT fire a resource error: a failed dynamic
+        // import rejects a promise instead. The peer entry is a single bundle, but the
+        // Shell code-splits, so without this the guard would stay silent exactly where a
+        // deploy removed a lazily loaded chunk. Message matching is the only signal the
+        // browsers agree on, so match all three spellings.
+        window.addEventListener('unhandledrejection', function (e) {
+          var m = e && e.reason && (e.reason.message || String(e.reason))
+          if (m && /dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(m)) {
+            notice()
+          }
+        })
+        // Backstop for failures that emit no error event (a bundle that loads and then
+        // throws). Generous delay: a slow connection must never trigger this.
+        window.setTimeout(function () {
+          var root = document.getElementById('root')
+          if (root && root.childElementCount === 0) notice()
+        }, 12000)
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

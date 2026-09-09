@@ -7,7 +7,16 @@ routes; the client (`shell/src/peer/lib/peerApi.ts`) calls them through the peer
 ## Routes
 - `POST /enrol` — `{ pid, email, consent:true }` → `{ ok }`. Requires consent (DL-036),
   validates the email domain against the cohort's `CohortConfig` (server-authoritative),
-  idempotent per `(pid, email)`.
+  idempotent per `(pid, email)`. **Does not put anyone on the list**: the address is stored
+  as `pending` and a confirmation email is sent (double opt-in). The response is identical
+  for new and already-enrolled addresses on purpose — the route is unauthenticated, so a
+  difference would let anyone with the `pid` test whether a given address is a member.
+- `POST /enrol-confirm` — `{ token }` → `{ ok, waiting }` / `{ ok:false,
+  reason:"invalid"|"expired" }`. The confirmation link's token. Only here does an address
+  become `enrolled` and therefore eligible for a seat. `waiting` says whether the person
+  landed in the wait pool (confirmed after the cohort was formed) rather than in the cutoff
+  allocation, so the landing page can say the right thing. The outcome may be revealed
+  because the one-time token is held only by the mailbox owner (DL-086).
 - `POST /exit-request` — `{ email, pid? }` → **always** `{ ok:true }` (non-revealing,
   DL-053). If the address is enrolled, stores a one-time token and emails the exit link
   via ZeptoMail. IP-rate-limited.
@@ -39,10 +48,12 @@ and by `/enrol`. One row per `pid`.
 | `pid` | Text | |
 | `email` | Text | lowercased |
 | `consent` | Boolean | always true when enrolled (DL-036) |
-| `status` | Text | `enrolled` (on the list / in the wait pool) \| `grouped` \| `exited` (final, DL-087) \| `dissolved` (group dissolved, has not re-joined the pool yet) |
+| `status` | Text | `pending` (submitted, not yet confirmed — never allocated) \| `enrolled` (on the list / in the wait pool) \| `grouped` \| `exited` (final, DL-087) \| `dissolved` (group dissolved, has not re-joined the pool yet) |
 | `group_id` | Text | set at formation/matching; the group this signup belongs to |
 | `pool_token` | Text | token in the dissolved-group email's wait-pool link (DL-087) |
 | `waiting_since` | DateTime | set on wait-pool entry; the 3-day-broadcast clock |
+| `confirm_token` | Text | one-time token from the confirmation email, cleared on confirmation |
+| `confirm_token_expiry` | DateTime | TTL of `confirm_token` (7 days). Expired `pending` rows are deleted by the matching sweep — consent was never completed for them |
 | `exit_token` | Text | one-time token, set on exit-request, cleared on exit-confirm |
 | `exit_token_expiry` | DateTime (or Text) | token TTL (24h) |
 
@@ -68,8 +79,9 @@ Functions → *(function)* → **Configuration** → Environment Variables → *
 The same tab's **Function Triggers** block is where the formation Cron is configured.
 
 Set on **`peer`**: `ADMIN_KEY`, `ZEPTOMAIL_TOKEN`, `ZEPTOMAIL_FROM`, `PEER_ORIGIN`.
-Set on **`accesscontrol`**: `PEER_ORIGIN` as well — it needs the peer origin in its own
-CORS allowlist. Secrets go in the console, never in git.
+Nothing has to be set on **`accesscontrol`** — it used to need `PEER_ORIGIN` for its own
+CORS allowlist, which is obsolete since CORS moved to the gateway (see below). Secrets go
+in the console, never in git.
 - `PEER_ORIGIN` — the peer pages' own origin. No trailing slash; links are built as
   `PEER_ORIGIN + "/?token=…"`. Per environment, because Development and Production are
   separate Slate apps:
@@ -79,8 +91,15 @@ CORS allowlist. Secrets go in the console, never in git.
   Both follow the existing `api.habify30.k-a-d-o.com` pattern. Setting up a further
   environment: see Catalyst_Platform_Capabilities.md Cluster E3 in the habify repo — the
   ownership record must be the TXT variant; the CNAME variant Catalyst offers is broken.
-  Used for CORS (here **and** in `accesscontrol`) and to build the exit link. In Dev the
-  localhost regex covers the browser; set this before Prod.
+  Used **only** to build the links in the emails — *not* for CORS. Measured on
+  Development 2026-09-08: with the peer origin registered as an Authorized Domain, the
+  gateway answers the OPTIONS preflight without invoking the function and also stamps
+  `Access-Control-Allow-Origin` onto the real response, so a manual header in the function
+  is a *duplicate*, and browsers reject a response carrying two of them even when the
+  values are identical. The manual CORS middleware was therefore removed from both `peer`
+  and `accesscontrol` (DL-082 §1). Consequence: **the Authorized Domain is what makes the
+  browser calls work; `PEER_ORIGIN` is what makes the mail links work.** Both are needed,
+  for different reasons, and one cannot substitute for the other.
 - `ZEPTOMAIL_TOKEN` — ZeptoMail Send-Mail API key (**secret**). Without it, `/exit-request`
   still returns ok but sends nothing (logs a notice).
 - `ZEPTOMAIL_FROM` — a verified ZeptoMail sender address.
@@ -96,9 +115,13 @@ in the formation email points at `PEER_ORIGIN/?gt=<token>#/gruppe`.
 
 ## Deploy (host terminal)
 1. Create the Data Store tables above (Development first).
-2. Set the env vars per function as described above (`ADMIN_KEY` on `peer`; `PEER_ORIGIN`
-   on `peer` **and** `accesscontrol`; `ZEPTOMAIL_TOKEN`/`ZEPTOMAIL_FROM` on `peer` once
-   ZeptoMail's EU endpoint + DPA are confirmed — OQ-037).
+2. Set the env vars per function as described above (`ADMIN_KEY` and `PEER_ORIGIN` on
+   `peer`; nothing on `accesscontrol`; `ZEPTOMAIL_TOKEN`/`ZEPTOMAIL_FROM` on `peer` once
+   ZeptoMail's EU endpoint + DPA are confirmed — OQ-037), **and** register the peer origin
+   under Authorized Domains for that environment (DL-082 §1) — that is a project setting,
+   not a function setting, and it is what the browser preflight depends on.
+   Development: done 2026-09-08 (`peer-dev.habify30.k-a-d-o.com`, hostname only — the
+   API rejects a value with a `https://` scheme).
 3. `catalyst deploy` (functions target `peer`; `accesscontrol` is also updated — it now
    returns `capabilities` and allows the peer origin).
 4. Build and deploy the peer frontend **separately**: `npm run build:peer` in `shell/`
@@ -139,8 +162,12 @@ secret is never a query string). Both were verified once via *Submit Job* → HT
 **Prod still needs the same setup** — job pool, both crons, and the env vars.
 
 ## Email copy
-Final as of 2026-09-08 (reviewed by Matthias) — the readable mirror of all ten artifacts
-is `EMAILS.md`; the strings in `index.js` are the technical source of truth. Every subject
+The readable mirror of every mail this system sends moved up to the repository root as
+**`TRANSACTIONAL_EMAILS.md`** — it is no longer a peer-only document, because it is where
+any future sending function will be listed too (today `peer` is the only one). Mails 1–10
+are final as of 2026-09-08 (reviewed by Matthias); mail 11, the double-opt-in confirmation
+(DL-090), is build-authored and not yet reviewed. The strings in `index.js` are the
+technical source of truth. Every subject
 is prefixed with the cohort's `programm_name` and every mail carries a footer pointing at
 `contact_email` (both from `AccessControl`, DL-058) — added centrally in `zeptoSend`.
 Set `ZEPTOMAIL_FROM` to **`noreply.habify30@k-a-d-o.com`**.

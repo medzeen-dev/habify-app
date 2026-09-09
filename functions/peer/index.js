@@ -12,8 +12,10 @@
 //   POST /pool-join      — (DL-087) dissolved group's last member enters the wait pool by link
 //   POST /run-matching   — (DL-037/087) admin-key guarded cron sweep: wait-pool matching + 3-day broadcast
 //
-// Called only from the peer-group origin (its own subdomain, DL-086) — set PEER_ORIGIN
-// as a Catalyst env var at deploy. The Shell never calls this function.
+// Called only from the peer-group origin (its own subdomain, DL-086); the Shell never
+// calls this function. That origin has to be an Authorized Domain on the API Gateway for
+// the browser's preflight to pass (DL-082 §1), and PEER_ORIGIN has to be set as a Catalyst
+// env var so the emails carry working links — two separate settings, see below.
 //
 // Lifecycle (DL-087): exit is FINAL — it removes the address from the list and does not
 // re-pool anyone. Wait-pool entry is always an active act: a late joiner's enrolment, or
@@ -28,23 +30,25 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// PEER_ORIGIN is the peer pages' own origin. It is used ONLY to build the links that go
+// into the emails (exit / opt-in / wait-pool) — no trailing slash. Without it, mails that
+// carry a link are skipped rather than sent broken.
+//
+// It is deliberately NOT used for CORS any more (DL-082 §1). CORS is the API Gateway's
+// job via Authorized Domains; measured on Development 2026-09-08, the gateway answers the
+// OPTIONS preflight without invoking this function at all, and adds
+// Access-Control-Allow-Origin to the real response as well. A manual header here is
+// therefore not a fallback but a duplicate — the measured response carried both the
+// gateway's header and this function's `access-control-allow-origin: null`, and browsers
+// reject a response with multiple Access-Control-Allow-Origin headers even when the
+// values match. New origin ⇒ register an Authorized Domain, do not add headers here.
 const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
-const ALLOWED_ORIGINS = [PEER_ORIGIN].filter(Boolean);
-const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/; // Dev only
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin) || LOCAL_ORIGIN.test(origin);
-  res.header("Access-Control-Allow-Origin", allowed ? origin : (ALLOWED_ORIGINS[0] || "null"));
-  res.header("Vary", "Origin");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") { res.sendStatus(200); return; }
-  next();
-});
 
 const EMAIL_FORMAT = /^[^\s@']+@[^\s@']+\.[a-z]{2,}$/i;
 const TOKEN_TTL_HOURS = 24;
+// Double opt-in (DL-089x, supersedes DL-086's "no enrolment double opt-in"). An address
+// only reaches `enrolled` — and therefore an allocation — after its owner clicks the link.
+const CONFIRM_TTL_DAYS = 7;
 
 function validPid(pid) {
   return typeof pid === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(pid);
@@ -64,6 +68,17 @@ function parseCatalystDate(val) {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? null : d;
 }
+// "2026-09-16 00:00:00" → "16. September 2026" for the mail texts. Returns null rather
+// than a half-formatted string when the value is missing or unparseable — the callers
+// leave the sentence out entirely in that case (same fail-open stance as the mail frame).
+function formatStichtag(raw) {
+  const d = parseCatalystDate(raw);
+  if (!d) return null;
+  const months = ["Januar", "Februar", "März", "April", "Mai", "Juni",
+    "Juli", "August", "September", "Oktober", "November", "Dezember"];
+  return d.getDate() + ". " + months[d.getMonth()] + " " + d.getFullYear();
+}
+
 function catalystNow(offsetMs) {
   return new Date(Date.now() + (offsetMs || 0)).toISOString().replace("T", " ").substring(0, 19);
 }
@@ -129,7 +144,15 @@ function contactFooter(contactEmail) {
  * `meta` carries the cohort's programme name (subject prefix) and contact address (footer).
  */
 async function zeptoSend(toEmail, subject, htmlbody, meta) {
-  const token = process.env.ZEPTOMAIL_TOKEN;
+  // ZeptoMail's console shows the Send-Mail key already carrying the scheme
+  // ("Zoho-enczapikey <key>"), because that is the whole Authorization header value it
+  // expects you to paste. Copying it verbatim into ZEPTOMAIL_TOKEN is therefore the
+  // natural thing to do — and it doubled the scheme here, which ZeptoMail answers with
+  // 401. Measured 2026-09-09 in Development, and invisible from outside: a failed send is
+  // only logged, because /exit-request must stay non-revealing (DL-053). So accept both
+  // shapes rather than relying on whoever sets the variable to strip the prefix.
+  const rawToken = (process.env.ZEPTOMAIL_TOKEN || "").trim();
+  const token = rawToken.replace(/^Zoho-enczapikey\s+/i, "");
   const from = process.env.ZEPTOMAIL_FROM;
   const m = meta || {};
   const fullSubject = m.programmName ? (m.programmName + ": " + subject) : subject;
@@ -145,7 +168,13 @@ async function zeptoSend(toEmail, subject, htmlbody, meta) {
         htmlbody: htmlbody + contactFooter(m.contactEmail),
       }),
     });
-    if (!resp.ok) console.log("ZeptoMail send failed:", resp.status, await resp.text().catch(() => ""));
+    // Log both outcomes, not just failures. /exit-request must answer {ok:true} whether or
+    // not the address exists (DL-053), so the HTTP response can never carry send status —
+    // the log is the only channel there is. Logging failures alone made a broken send
+    // indistinguishable from a working one from every side at once (measured 2026-09-09:
+    // a doubled auth scheme produced 401s that surfaced nowhere).
+    if (resp.ok) console.log("ZeptoMail sent:", fullSubject);
+    else console.log("ZeptoMail send failed:", resp.status, await resp.text().catch(() => ""));
   } catch (e) {
     console.log("ZeptoMail send error:", e && e.message);
   }
@@ -231,6 +260,16 @@ function dissolvedBody(poolLink) {
     "<p><a href=\"" + poolLink + "\">Auf die Warteliste setzen</a></p>" +
     "<p>Wenn du nichts tust, passiert nichts weiter — du stehst dann auf keiner Liste.</p>";
 }
+function confirmBody(link, stichtag) {
+  return "<p>Fast geschafft — es fehlt nur noch deine Bestätigung.</p>" +
+    "<p><a href=\"" + link + "\">Eintragung bestätigen</a></p>" +
+    "<p><strong>Ohne diesen Klick wirst du keiner Peergruppe zugeteilt.</strong> Wir bestätigen so, dass die " +
+    "Adresse wirklich dir gehört — sonst könnte ein Tippfehler dazu führen, dass deine Gruppendaten an eine " +
+    "fremde Person gehen." + (stichtag ? " Die Zuteilung erfolgt am " + stichtag + "." : "") + "</p>" +
+    "<p>Der Link ist " + CONFIRM_TTL_DAYS + " Tage gültig. Hast du das nicht angefragt, ignoriere diese " +
+    "E-Mail einfach — ohne Bestätigung passiert nichts.</p>";
+}
+
 function waitPoolInfoBody() {
   return "<p>Du stehst jetzt auf der Warteliste für eine Peergruppe. So läuft die Zuordnung:</p><ul>" +
     "<li>Sobald eine zweite wartende Person da ist, bilden wir aus euch beiden eine Gruppe — auf eine dritte warten wir nicht.</li>" +
@@ -457,7 +496,7 @@ app.get("/", (req, res) => {
 
 // --- Enrolment (DL-036) ---
 app.post("/enrol", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const body = req.body || {};
   const pid = body.pid;
   const consent = body.consent;
@@ -484,7 +523,7 @@ app.post("/enrol", async (req, res) => {
     let cfg = {};
     try {
       const cfgRows = await catalystApp.zcql().executeZCQLQuery(
-        "SELECT allowed_email_domains, manual_domain_exceptions, formed_time FROM CohortConfig WHERE pid = '" + safePid + "'"
+        "SELECT allowed_email_domains, manual_domain_exceptions, formed_time, peer_group_cutoff_date FROM CohortConfig WHERE pid = '" + safePid + "'"
       );
       if (cfgRows && cfgRows.length) cfg = cfgRows[0].CohortConfig;
     } catch (cfgErr) {
@@ -499,51 +538,55 @@ app.post("/enrol", async (req, res) => {
     const existing = await catalystApp.zcql().executeZCQLQuery(
       "SELECT ROWID, status FROM PeerSignups WHERE pid = '" + safePid + "' AND email = '" + safeEmail + "'"
     );
-    let rowId = null;
+    // Double opt-in: submitting the form does NOT put anyone on the list. The address is
+    // parked as `pending` and only becomes `enrolled` when its owner clicks the link in
+    // the confirmation email (/enrol-confirm). Formation and matching both select
+    // `status = 'enrolled'`, so a pending row can never be allocated a seat.
+    //
+    // DL-086 decided against this and accepted one residual risk: someone enrolling a
+    // colleague unasked. That case is self-correcting — the colleague exists, gets the
+    // mail, and can leave. The case that forced the reversal is the typo: a mistyped
+    // address that happens to belong to a STRANGER receives the formation email, which
+    // carries the other members' email addresses. That is third-party personal data
+    // disclosed to an uninvolved person, and it runs against the very reason DL-086 chose
+    // a native EU pipeline. It also blocks a seat that can never be freed, because the
+    // exit link goes to the mistyped address too.
+    const confirmToken = crypto.randomBytes(24).toString("hex");
+    const confirmFields = {
+      status: "pending", consent: true,
+      confirm_token: confirmToken,
+      confirm_token_expiry: catalystNow(CONFIRM_TTL_DAYS * 24 * 3600 * 1000),
+    };
+
     if (existing && existing.length) {
       const row = existing[0].PeerSignups;
-      // Only a previously EXITED address is re-enrolled — exit is final, re-entry is this
-      // deliberate act (DL-087). Someone already `enrolled` or `grouped` is left untouched:
-      // re-submitting the form must never pull a member out of their group (DL-035).
-      // A `dissolved` member re-enrolling here is fine too — it is the same active choice
-      // their pool link would have been.
-      if (row.status === "exited" || row.status === "dissolved") {
-        // Clear token/date fields with null — an empty string is not a valid datetime and
-        // would make updateRow reject on the datetime columns.
-        await table.updateRow({
-          ROWID: row.ROWID, status: "enrolled", consent: true, group_id: null,
-          exit_token: null, exit_token_expiry: null, pool_token: null, waiting_since: null,
-        });
-        rowId = row.ROWID;
-      } else {
+      // Someone already `enrolled` or `grouped` is left untouched: re-submitting the form
+      // must never pull a member out of their group (DL-035). Answer ok — the response
+      // stays identical for known and new addresses on purpose, because a difference would
+      // turn this unauthenticated route into a membership oracle.
+      if (row.status === "enrolled" || row.status === "grouped") {
         res.status(200).json({ status: "ok", ok: true });
         return;
       }
+      // `pending` → re-issue: the first mail may have been lost or the link expired, and
+      // re-submitting the form is how a participant asks for it again.
+      // `exited` / `dissolved` → re-entry is a deliberate act (DL-087), and it has to pass
+      // through confirmation again like any other enrolment.
+      await table.updateRow(Object.assign({
+        ROWID: row.ROWID, group_id: null,
+        exit_token: null, exit_token_expiry: null, pool_token: null, waiting_since: null,
+      }, confirmFields));
     } else {
-      const created = await table.insertRow({ pid: safePid, email: email, consent: true, status: "enrolled" });
-      const c = Array.isArray(created) ? created[0] : created;
-      rowId = (c && (c.ROWID || c.rowid)) || null;
-      if (!rowId) {
-        const q = await catalystApp.zcql().executeZCQLQuery(
-          "SELECT ROWID FROM PeerSignups WHERE pid = '" + safePid + "' AND email = '" + safeEmail + "'"
-        );
-        if (q && q.length) rowId = q[0].PeerSignups.ROWID;
-      }
+      await table.insertRow(Object.assign({ pid: safePid, email: email }, confirmFields));
     }
 
-    // Late joiner (DL-037): enrolling after the cutoff means entering the wait pool, not a
-    // group. Start the waiting clock, try to match immediately ("as soon as 2 solos are
-    // available"), and send the wait-pool information mail ONLY if still waiting after
-    // that — otherwise "you are waiting" would arrive seconds before "your group is set"
-    // (DL-087).
-    if (cfg.formed_time && rowId) {
-      await table.updateRow({ ROWID: rowId, waiting_since: catalystNow(0) });
-      const m = await matchCohort(catalystApp, safePid);
-      if (m.waiting.indexOf(email) !== -1) {
-        const meta = await loadCohortMeta(catalystApp, safePid);
-        await zeptoSend(email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
-      }
-    }
+    // No wait-pool handling here any more — it moved to /enrol-confirm, because a pending
+    // address must not enter the pool or be matched.
+    const meta = await loadCohortMeta(catalystApp, safePid);
+    const stichtag = formatStichtag(cfg.peer_group_cutoff_date);
+    await zeptoSend(email, "Bitte bestätige deine Eintragung für die Peergruppe",
+      confirmBody(PEER_ORIGIN + "/?ct=" + confirmToken + "#/bestaetigen", cfg.formed_time ? null : stichtag), meta);
+
     res.status(200).json({ status: "ok", ok: true });
   } catch (err) {
     console.log(err);
@@ -551,9 +594,74 @@ app.post("/enrol", async (req, res) => {
   }
 });
 
+// The other half of the double opt-in: the link from the confirmation email. Only here
+// does an address become `enrolled` and thus eligible for a seat.
+//
+// Unlike /enrol this route MAY report its outcome, for the same reason /exit-confirm may
+// (DL-086): the one-time token is the secret and is held only by the mailbox owner, so the
+// answer tells the reader about themselves and nobody about anyone else.
+app.post("/enrol-confirm", async (req, res) => {
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
+  const token = String((req.body || {}).token || "").trim();
+  if (!/^[a-f0-9]{48}$/.test(token)) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
+
+  try {
+    const rows = await catalystApp.zcql().executeZCQLQuery(
+      "SELECT ROWID, pid, email, status, confirm_token_expiry FROM PeerSignups WHERE confirm_token = '" + token + "'"
+    );
+    if (!rows || rows.length === 0) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
+    const row = rows[0].PeerSignups;
+
+    // Already through — a second click on the same link, or the browser reloading the
+    // landing. Confirm again rather than showing a scary error; `waiting` reports where
+    // they actually stand now.
+    if (row.status === "enrolled" || row.status === "grouped") {
+      res.status(200).json({ status: "ok", ok: true, waiting: row.status === "enrolled" });
+      return;
+    }
+
+    const expiry = parseCatalystDate(row.confirm_token_expiry);
+    if (expiry && Date.now() > expiry.getTime()) {
+      res.status(200).json({ status: "ok", ok: false, reason: "expired" });
+      return;
+    }
+
+    const table = catalystApp.datastore().table("PeerSignups");
+    await table.updateRow({
+      ROWID: row.ROWID, status: "enrolled", confirm_token: null, confirm_token_expiry: null,
+    });
+
+    // Late joiner (DL-037), moved here from /enrol: confirming after the cohort was formed
+    // means entering the wait pool, not the allocation. Start the waiting clock, try to
+    // match immediately ("as soon as 2 solos are available"), and send the wait-pool
+    // information mail ONLY if still waiting afterwards — otherwise "you are waiting"
+    // would arrive seconds before "your group is set" (DL-087).
+    const safePid = String(row.pid).replace(/'/g, "");
+    let waiting = false;
+    const cfgRows = await catalystApp.zcql().executeZCQLQuery(
+      "SELECT formed_time FROM CohortConfig WHERE pid = '" + safePid + "'"
+    );
+    const formed = cfgRows && cfgRows.length ? cfgRows[0].CohortConfig.formed_time : null;
+    if (formed) {
+      await table.updateRow({ ROWID: row.ROWID, waiting_since: catalystNow(0) });
+      const m = await matchCohort(catalystApp, safePid);
+      waiting = m.waiting.indexOf(row.email) !== -1;
+      if (waiting) {
+        const meta = await loadCohortMeta(catalystApp, safePid);
+        await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
+      }
+    }
+
+    res.status(200).json({ status: "ok", ok: true, waiting: waiting });
+  } catch (err) {
+    console.log(err);
+    res.status(200).json({ status: "ok", ok: false, reason: "invalid" });
+  }
+});
+
 // --- Exit request (DL-053 / DL-037): always non-revealing ---
 app.post("/exit-request", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
 
   if (await isRateLimited(catalystApp, req)) { res.status(200).json({ status: "ok", ok: true }); return; }
 
@@ -571,7 +679,11 @@ app.post("/exit-request", async (req, res) => {
     );
     // Any active membership can exit — `enrolled` (pre-formation / wait-pool) as well as
     // `grouped` (after the DL-035 cutoff). Only an already-`exited` row is skipped.
-    const enrolled = (rows || []).map((r) => r.PeerSignups).find((r) => r.status !== "exited");
+    // `pending` counts as not on the list: an address that never confirmed has nothing to
+    // exit from, and mailing it would defeat the purpose of the double opt-in — a mistyped
+    // address belonging to a stranger would receive a second mail from us.
+    const enrolled = (rows || []).map((r) => r.PeerSignups)
+      .find((r) => r.status !== "exited" && r.status !== "pending");
     if (enrolled) {
       const rawToken = crypto.randomBytes(24).toString("hex"); // 48 hex chars
       await catalystApp.datastore().table("PeerSignups").updateRow({
@@ -588,7 +700,7 @@ app.post("/exit-request", async (req, res) => {
 
 // --- Exit confirm (DL-053 / DL-037): the emailed token performs the removal ---
 app.post("/exit-confirm", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const token = String((req.body || {}).token || "").trim();
   if (!/^[a-f0-9]{48}$/.test(token)) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
 
@@ -601,7 +713,10 @@ app.post("/exit-confirm", async (req, res) => {
 
     const expiry = parseCatalystDate(row.exit_token_expiry);
     if (expiry && Date.now() > expiry.getTime()) { res.status(200).json({ status: "ok", ok: false, reason: "expired" }); return; }
-    if (row.status === "exited") { res.status(200).json({ status: "ok", ok: true }); return; } // idempotent
+    // Idempotent replay: group_id was already cleared by the first confirmation, so we
+    // can no longer tell whether there was a group. Report none — the neutral wording is
+    // the safe default, and this person already saw the accurate message the first time.
+    if (row.status === "exited") { res.status(200).json({ status: "ok", ok: true, hadGroup: false }); return; }
 
     const groupId = row.group_id;
     // Remove from the group/list. Clear token + group with null (never "" — datetime).
@@ -653,7 +768,12 @@ app.post("/exit-confirm", async (req, res) => {
       }
     }
 
-    res.status(200).json({ status: "ok", ok: true });
+    // Whether this address was in a group decides what the landing page may claim. Someone
+    // who left before the cutoff, or from the wait pool, has no fellow members to notify —
+    // telling them otherwise describes an email that was never sent. Returning this is
+    // within the model: the one-time token is the secret and is held only by the mailbox
+    // owner (DL-086), so this reveals the reader's own state to the reader.
+    res.status(200).json({ status: "ok", ok: true, hadGroup: !!groupId });
   } catch (err) {
     console.log(err);
     res.status(200).json({ status: "ok", ok: false, reason: "invalid" });
@@ -665,7 +785,7 @@ app.post("/exit-confirm", async (req, res) => {
 // whose cutoff has passed and that is not yet formed. `pid` + `force` (admin) forms one
 // cohort regardless of cutoff (manual/testing). ---
 app.post("/run-formation", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const body = req.body || {};
   const adminKey = process.env.ADMIN_KEY;
   if (!adminKey || body.key !== adminKey) { res.status(403).json({ status: "error", message: "forbidden" }); return; }
@@ -695,7 +815,7 @@ app.post("/run-formation", async (req, res) => {
 // --- Opt-in-growth (DL-037 A3): read + toggle a 2-person group's open-to-new flag via
 // the token from the formation email. Only 2-groups have an optin_token. ---
 app.post("/group-status", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const token = String((req.body || {}).gt || "").trim();
   if (!/^[a-f0-9]{32}$/.test(token)) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
   try {
@@ -713,7 +833,7 @@ app.post("/group-status", async (req, res) => {
 });
 
 app.post("/group-optin", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const token = String((req.body || {}).gt || "").trim();
   if (!/^[a-f0-9]{32}$/.test(token)) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
   try {
@@ -736,7 +856,7 @@ app.post("/group-optin", async (req, res) => {
 // participant's own click, never automatic. Matches immediately afterwards; the wait-pool
 // information mail goes out only if they are still waiting. ---
 app.post("/pool-join", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const token = String((req.body || {}).pt || "").trim();
   if (!/^[a-f0-9]{32}$/.test(token)) { res.status(200).json({ status: "ok", ok: false, reason: "invalid" }); return; }
 
@@ -768,13 +888,33 @@ app.post("/pool-join", async (req, res) => {
 // --- Cron sweep (DL-037/DL-087). Matching also runs immediately at both pool entries;
 // this is the safety net plus the home of the inherently time-based 3-day broadcast. ---
 app.post("/run-matching", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
   const body = req.body || {};
   const adminKey = process.env.ADMIN_KEY;
   if (!adminKey || body.key !== adminKey) { res.status(403).json({ status: "error", message: "forbidden" }); return; }
 
   const onlyPid = validPid(body.pid) ? String(body.pid).replace(/'/g, "") : null;
   try {
+    // Sweep away enrolments whose confirmation link has expired. These are addresses for
+    // which consent was never completed — nobody ever proved the mailbox is theirs — so
+    // keeping them would mean storing personal data on the strength of a form submission
+    // alone. Only `pending` rows past their own expiry are touched; a confirmed member has
+    // no confirm_token and can never match this.
+    let purged = 0;
+    try {
+      const stale = await catalystApp.zcql().executeZCQLQuery(
+        "SELECT ROWID, confirm_token_expiry FROM PeerSignups WHERE status = 'pending'"
+      );
+      const signups = catalystApp.datastore().table("PeerSignups");
+      for (const r of (stale || [])) {
+        const row = r.PeerSignups;
+        const exp = parseCatalystDate(row.confirm_token_expiry);
+        if (exp && Date.now() > exp.getTime()) { await signups.deleteRow(row.ROWID); purged++; }
+      }
+    } catch (purgeErr) {
+      console.log("pending purge skipped:", purgeErr && purgeErr.message);
+    }
+
     let q = "SELECT ROWID, pid, formed_time, last_broadcast_time FROM CohortConfig";
     if (onlyPid) q += " WHERE pid = '" + onlyPid + "'";
     const cRows = await catalystApp.zcql().executeZCQLQuery(q);
@@ -787,7 +927,7 @@ app.post("/run-matching", async (req, res) => {
       const b = await broadcastIfDue(catalystApp, c);
       results.push({ pid: c.pid, paired: m.paired, absorbed: m.absorbed, waiting: m.waiting.length, broadcastGroups: b.sent });
     }
-    res.status(200).json({ status: "ok", results });
+    res.status(200).json({ status: "ok", purged, results });
   } catch (err) {
     console.log(err);
     res.status(500).json({ status: "error", message: String(err && err.message) });

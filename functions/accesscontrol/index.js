@@ -7,25 +7,23 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// accesscontrol is called by BOTH the Shell and the peer-group origin (getPeerConfig,
-// DL-086) — the peer origin (its own subdomain) is added via the PEER_ORIGIN env var.
-const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
-const ALLOWED_ORIGINS = ["https://habify30.k-a-d-o.com", PEER_ORIGIN].filter(Boolean);
-const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/; // Dev only (localhost Shell/peer)
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin) || LOCAL_ORIGIN.test(origin);
-  res.header("Access-Control-Allow-Origin", allowed ? origin : ALLOWED_ORIGINS[0]);
-  res.header("Vary", "Origin");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") {
-    res.sendStatus(200);
-    return;
-  }
-  next();
-});
+// No CORS handling here — on purpose (DL-082 §1). accesscontrol is called cross-origin
+// by BOTH the Shell and the peer-group origin (getPeerConfig, DL-086), and CORS for both
+// is the API Gateway's job via Authorized Domains. Measured on Development 2026-09-08,
+// with peer-dev.habify30.k-a-d-o.com registered as an Authorized Domain:
+//   OPTIONS  → answered by the gateway alone; the function is never invoked
+//              (no X-Catalyst-Function-* headers on the response), so a manual OPTIONS
+//              short-circuit in here could not satisfy a preflight even if we wanted it to.
+//   POST/GET → the gateway adds Access-Control-Allow-Origin to the real response too.
+// So a manual header here is not a fallback, it is a second header: the response carried
+// both `Access-Control-Allow-Origin: <peer origin>` (gateway) and
+// `access-control-allow-origin: https://habify30.k-a-d-o.com` (this function), and a
+// browser rejects a response with multiple Access-Control-Allow-Origin headers —
+// *including when the two values are identical*. Setting PEER_ORIGIN here would therefore
+// not have fixed it, which is why this function no longer reads that variable at all.
+//
+// New origin ⇒ register it under Authorized Domains for that environment; do not add
+// headers here. Local `npm run dev` is unaffected: the Vite proxy makes it same-origin.
 
 // Parse a Catalyst datetime ("YYYY-MM-DD HH:mm:ss:SSS") into a Date.
 // Returns null if absent/unparseable — callers treat that as "no expiry".
@@ -47,7 +45,7 @@ app.get("/", (req, res) => {
 //   { valid:true, programmName?, contactEmail? }
 app.post("/", (req, res) => {
 
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
 
   const body = req.body || {};
   const pid = body.pid;
@@ -98,7 +96,7 @@ app.post("/", (req, res) => {
       // (DL-086), attached here as the `capabilities` object the client expects.
       // Fail-open: any error / missing config → respond valid without capabilities.
       catalystApp.zcql().executeZCQLQuery(
-        "SELECT allowed_email_domains, manual_domain_exceptions, peer_group_cutoff_date FROM CohortConfig WHERE pid = '" + safePid + "'"
+        "SELECT allowed_email_domains, manual_domain_exceptions, peer_group_cutoff_date, formed_time FROM CohortConfig WHERE pid = '" + safePid + "'"
       )
         .then((cfgRows) => {
           if (cfgRows && cfgRows.length) {
@@ -111,6 +109,14 @@ app.post("/", (req, res) => {
             const cutoff = parseCatalystDate(c.peer_group_cutoff_date);
             if (cutoff) caps.peerGroupCutoffDate = cutoff.toISOString().slice(0, 10);
             else if (c.peer_group_cutoff_date) caps.peerGroupCutoffDate = String(c.peer_group_cutoff_date);
+            // Has this cohort already been formed? Whoever enrols after that is a late
+            // joiner and goes into the wait pool, NOT into the cutoff allocation (DL-037)
+            // — the enrolment screen has to promise them something different.
+            // `formed_time`, not the cutoff date, is the authority: the two come apart
+            // whenever a cohort is formed early or late (a forced formation in testing,
+            // a cron that ran the following night). Comparing dates on the client would be
+            // right most of the time, which is the worst kind of wrong for a promise.
+            if (c.formed_time) caps.peerGroupFormed = true;
             if (Object.keys(caps).length) out.capabilities = caps;
           }
           res.status(200).json(out);

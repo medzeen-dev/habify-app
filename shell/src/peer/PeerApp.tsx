@@ -5,6 +5,7 @@ import { PeerExitSent } from './pages/PeerExitSent'
 import { PeerExitDone } from './pages/PeerExitDone'
 import { PeerGroupOptin } from './pages/PeerGroupOptin'
 import { PeerWaitPool } from './pages/PeerWaitPool'
+import { PeerEnrolConfirm } from './pages/PeerEnrolConfirm'
 import { getPeerConfig, type PeerConfig } from './lib/peerApi'
 
 // Peer-group context (DL-053): pid-only views, no uid, no localStorage. The three
@@ -16,10 +17,11 @@ import { getPeerConfig, type PeerConfig } from './lib/peerApi'
 // the Shell's uid physically unreadable here (the DPO boundary, DL-086). The Shell is
 // never deployed to that origin; that is what keeps the boundary structural.
 
-type View = 'signup' | 'exit' | 'exit-sent' | 'exit-done' | 'group' | 'waitpool'
+type View = 'signup' | 'exit' | 'exit-sent' | 'exit-done' | 'group' | 'waitpool' | 'enrol-confirm'
 
 function viewFromHash(): View {
   const h = window.location.hash.replace(/^#\/?/, '')
+  if (h.startsWith('bestaetigen')) return 'enrol-confirm' // token-landing from the confirmation email (double opt-in)
   if (h.startsWith('abmelden')) return 'exit-done' // token-landing from the exit email
   if (h.startsWith('gruppe')) return 'group' // opt-in-growth landing from the formation email
   if (h.startsWith('wartepool')) return 'waitpool' // wait-pool landing from the dissolved-group email
@@ -54,6 +56,9 @@ export function PeerApp() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
+  if (view === 'enrol-confirm') {
+    return <PeerEnrolConfirm />
+  }
   if (view === 'exit-done') {
     return <PeerExitDone />
   }

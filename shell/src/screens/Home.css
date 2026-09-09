@@ -54,7 +54,7 @@
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   background: var(--color-bg-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-8);
 }
 .h30-infoblock__icon {
   flex-shrink: 0;
@@ -73,7 +73,7 @@
 .h30-card {
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-8);
   box-shadow: 0 1px 3px rgba(36, 31, 28, 0.08);
 }
 .h30-card__head {
@@ -91,7 +91,7 @@
 .h30-tasks {
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-8);
   box-shadow: 0 1px 3px rgba(36, 31, 28, 0.08);
 }
 .h30-tasks__head {

@@ -8,22 +8,18 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const ALLOWED_ORIGINS = ["https://habify30.k-a-d-o.com"];
-const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/; // Dev only (localhost Shell)
-
-app.use((req, res, next) => {
-  const origin = req.headers.origin || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin) || LOCAL_ORIGIN.test(origin);
-  res.header("Access-Control-Allow-Origin", allowed ? origin : ALLOWED_ORIGINS[0]);
-  res.header("Vary", "Origin");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type");
-  if (req.method === "OPTIONS") {
-    res.sendStatus(200);
-    return;
-  }
-  next();
-});
+// No CORS handling here — on purpose (DL-089, last of the three functions to be brought
+// in line). CORS is the API Gateway's job via Authorized Domains, per environment. A
+// header set here would not be a fallback but a duplicate: measured on Development, the
+// gateway answers the OPTIONS preflight without invoking the function at all and stamps
+// Access-Control-Allow-Origin onto the real response as well, and a browser rejects a
+// response carrying two of them even when the values are identical.
+//
+// This function was the one left carrying the old headers, harmless only because no Shell
+// origin was authorised yet. Removing them now means the Shell's first real deployment
+// cannot inherit the duplicate — it just has to be registered as an Authorized Domain,
+// like any other origin. Local `npm run dev` is unaffected: the Vite proxy makes it
+// same-origin.
 
 const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
@@ -97,7 +93,7 @@ app.get("/", (req, res) => {
 
 app.post("/register", (req, res) => {
 
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
 
   const body = req.body || {};
   const pid = body.pid;
@@ -145,7 +141,7 @@ app.post("/register", (req, res) => {
 
 app.post("/recover", async (req, res) => {
 
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.applogic });
+  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
 
   // Rate-limit (DL-057): /recover is the only endpoint reachable without a prior
   // accesscontrol gate, so it must be throttled against brute-force.
