@@ -9,8 +9,12 @@ export function PeerExitSent({ email }: { email: string }) {
     <PeerLayout>
       <h1 className="t-display h30-peer__title">Prüfe dein Postfach</h1>
 
-      <p className="t-label h30-peer__mirror-label">ABMELDELINK ANGEFORDERT FÜR</p>
-      <p className="t-heading-sm h30-peer__mirror-email">{email || '—'}</p>
+      {/* Figma fuehrt hier eine eigene Flaeche (color/bg/brand-subtle, radius/12) — der
+          Code hatte nur zwei nackte Absaetze. Nachgezogen 2026-09-09. */}
+      <div className="h30-peer__mirror">
+        <p className="t-label h30-peer__mirror-label">ABMELDELINK ANGEFORDERT FÜR</p>
+        <p className="t-heading-sm h30-peer__mirror-email">{email || '—'}</p>
+      </div>
 
       <p className="t-body-lg h30-peer__intro">
         Wenn diese Adresse in einer Peergruppe eingetragen ist, haben wir dir gerade eine Nachricht geschickt. Öffne den
