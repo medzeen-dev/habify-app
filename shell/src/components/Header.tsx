@@ -1,13 +1,15 @@
 import './Header.css'
 
 /**
- * Logos-only header. Entry screens use it borderless; the Wizard uses `bordered`
- * (bottom divider, "kein Tab-Ausbruch"). Left: habify30 wordmark; right: reserved
- * client-logo slot (DL-041). Wordmark is text until the real asset is wired.
+ * Logos-only header. The bottom divider is unconditional: Figma carries it inside the
+ * component, so the `bordered` modifier is gone (decided 2026-09-10). Note the visible
+ * consequence -- entry, error and peer-group pages previously rendered without a line.
+ * Left: habify30 wordmark; right: reserved client-logo slot (DL-041). Wordmark is text
+ * until the real asset is wired.
  */
-export function Header({ bordered = false }: { bordered?: boolean }) {
+export function Header() {
   return (
-    <header className={bordered ? 'h30-header h30-header--bordered' : 'h30-header'}>
+    <header className="h30-header">
       <div className="h30-header__wordmark">habify30</div>
       <div className="h30-header__client-slot" aria-hidden="true" />
     </header>
