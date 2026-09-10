@@ -87,7 +87,9 @@ function catalystNow(offsetMs) {
 // outbound email, so throttle it against mail-bombing an address. ---
 const RL_LIMIT = 10;
 const RL_TTL_HOURS = 1;
-const RL_SEGMENT_ID = "22671000000014066"; // Dev "Default" segment. TODO: Prod segment id before Prod deploy.
+const RL_SEGMENT_ID = "22671000000014066"; // "Default"-Segment. Verifiziert 2026-09-10: Development und Production
+// fuehren beide genau dieses eine Segment mit identischer ID (List_All_Segments in beiden
+// Environments). Der Wert gilt also in Prod unveraendert - hier ist nichts nachzuziehen.
 
 function clientIp(req) {
   const xff = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
