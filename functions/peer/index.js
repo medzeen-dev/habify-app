@@ -19,8 +19,10 @@
 //
 // Lifecycle (DL-087): exit is FINAL — it removes the address from the list and does not
 // re-pool anyone. Wait-pool entry is always an active act: a late joiner's enrolment, or
-// a dissolved group's last member clicking their link. Matching runs immediately at both
-// entry points; /run-matching is the safety net and the home of the 3-day broadcast.
+// a dissolved group's last member clicking their link. Matching itself runs ONLY in
+// /run-matching, the serialised cron sweep — see matchCohort. Entering the pool therefore
+// always means waiting for the next sweep; /run-matching is also the home of the 3-day
+// broadcast.
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
@@ -43,6 +45,21 @@ app.use(express.urlencoded({ extended: true }));
 // reject a response with multiple Access-Control-Allow-Origin headers even when the
 // values match. New origin ⇒ register an Authorized Domain, do not add headers here.
 const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
+
+/**
+ * Build marker — bump this whenever a deploy's effect has to be verifiable from outside.
+ *
+ * "DEPLOYMENT SUCCESSFUL" does not mean the running code is the deployed code: serverless
+ * keeps warm instances alive across a deploy, and `modified_time` on the function says
+ * when it was written, not which build answers the next request. Without a marker the only
+ * way to tell is to reconstruct it from the data a test left behind — which is guesswork
+ * (2026-09-10: two concurrency tests produced defects that could not come from the new
+ * code, and the question stayed open). `GET /` settles it in one call.
+ *
+ * Do NOT read it from a secret or an env var: `Get_Function` returns every environment
+ * variable in cleartext, so anything placed there is exposed by an ordinary read.
+ */
+const BUILD = "2026-09-10-sweep-only";
 
 const EMAIL_FORMAT = /^[^\s@']+@[^\s@']+\.[a-z]{2,}$/i;
 const TOKEN_TTL_HOURS = 24;
@@ -313,6 +330,46 @@ function broadcastBody(count, optinLink) {
     "<p>Wenn das für euch nicht passt, ignoriere diese E-Mail einfach.</p>";
 }
 
+/**
+ * Claim a signup for a group before writing anything else.
+ *
+ * **This is not a lock, and must not be relied on as one.** Measured on Development
+ * 2026-09-10: under real concurrency two parallel runs both reported winning the claim on
+ * the same row, and one then overwrote the other's assignment. The datastore does not
+ * serialise `WHERE group_id IS NULL` against a competing write. The same measurement
+ * disqualified the two other candidates — a cache-segment key (`put` overwrites silently)
+ * and a unique column (4 of 10 concurrent insert pairs produced duplicates in a column
+ * declared unique). Catalyst offers no application-level mutual exclusion; the only
+ * serialisation this system has is a job pool with max count 1.
+ *
+ * What it still buys, and why it stays: the claim runs *before* the group row exists, so a
+ * pairing that cannot be completed leaves no PeerGroups row behind, and nobody is put in a
+ * group of one. Under the serialised sweep (matchCohort's header) there is no competing
+ * writer anyway — this is the second line, not the first.
+ *
+ * Returns true if this run got the row, false if it was already taken.
+ */
+async function claimSignup(catalystApp, rowid, groupId) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    "UPDATE PeerSignups SET group_id = '" + String(groupId).replace(/'/g, "") + "', status = 'grouped'" +
+    " WHERE ROWID = " + String(rowid).replace(/[^0-9]/g, "") + " AND group_id IS NULL"
+  );
+  return !!(rows && rows.length);
+}
+
+/**
+ * Give a claimed row back. Only ever called when a pairing could not be completed — the
+ * `group_id` condition makes sure a run releases nothing but its own claim, even if the
+ * row has meanwhile been taken over by someone else.
+ */
+async function releaseSignup(catalystApp, rowid, groupId) {
+  await catalystApp.zcql().executeZCQLQuery(
+    "UPDATE PeerSignups SET group_id = NULL, status = 'enrolled'" +
+    " WHERE ROWID = " + String(rowid).replace(/[^0-9]/g, "") +
+    " AND group_id = '" + String(groupId).replace(/'/g, "") + "'"
+  );
+}
+
 // Form all groups for one cohort: shuffle enrolled (ungrouped) members, partition into
 // 2–3, create PeerGroups rows, assign members, email everyone. Idempotent per cohort
 // via CohortConfig.formed_time (set by the caller's guard).
@@ -323,7 +380,6 @@ async function formCohort(catalystApp, pid) {
     "SELECT ROWID, email FROM PeerSignups WHERE pid = '" + safePid + "' AND status = 'enrolled'"
   );
   const members = (rows || []).map((r) => r.PeerSignups);
-  const signups = catalystApp.datastore().table("PeerSignups");
   const groups = catalystApp.datastore().table("PeerGroups");
   let formedGroups = 0;
 
@@ -335,13 +391,26 @@ async function formCohort(catalystApp, pid) {
       const grp = members.slice(idx, idx + size);
       idx += size;
       const groupId = crypto.randomBytes(8).toString("hex");   // 16 hex
-      const optinToken = size === 2 ? crypto.randomBytes(16).toString("hex") : null; // only 2-groups can grow
-      await groups.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
+
+      // Claim every member before the group exists. Someone a parallel run has already
+      // grouped must not be pulled into a second group, and must not receive a second
+      // "your group is set" mail. What is left after claiming is the real group.
+      const claimed = [];
       for (const m of grp) {
-        await signups.updateRow({ ROWID: m.ROWID, group_id: groupId, status: "grouped" });
+        if (await claimSignup(catalystApp, m.ROWID, groupId)) claimed.push(m);
       }
-      for (const m of grp) {
-        const others = grp.filter((x) => x.email !== m.email).map((x) => x.email);
+      if (claimed.length < 2) {
+        // A group of one is no group — hand the row back so the wait pool can use it.
+        for (const m of claimed) await releaseSignup(catalystApp, m.ROWID, groupId);
+        continue;
+      }
+
+      // Decided after claiming, not before: only an actual 2-group may grow, and losing a
+      // member to a parallel run can turn a planned 3 into a 2.
+      const optinToken = claimed.length === 2 ? crypto.randomBytes(16).toString("hex") : null;
+      await groups.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
+      for (const m of claimed) {
+        const others = claimed.filter((x) => x.email !== m.email).map((x) => x.email);
         const optinLink = optinToken ? (PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe") : null;
         await zeptoSend(m.email, "Deine habify30-Peergruppe steht", formationBody(others, optinLink), meta);
       }
@@ -405,6 +474,16 @@ function isOpen(g) {
  * Returns the emails still waiting afterwards, so the caller can send the wait-pool
  * information mail to someone who has just entered and was not matched immediately.
  */
+/**
+ * **Call this from the cron sweep only.** `/run-matching` runs through the job pool
+ * `peerjobs`, whose max count of 1 is the only serialisation Catalyst gives us (measured
+ * 2026-09-10 — see claimSignup). Calling it from a participant-facing route puts a second
+ * writer on the same wait pool, and two of those pair the same person into two groups.
+ *
+ * Until 2026-09-10 `/enrol-confirm` and `/pool-join` called it for an immediate match. They
+ * no longer do: entering the pool now always means waiting for the next sweep. That costs
+ * up to an hour of reaction time and is the price of correctness.
+ */
 async function matchCohort(catalystApp, pid) {
   const safePid = String(pid).replace(/'/g, "");
   const meta = await loadCohortMeta(catalystApp, safePid);
@@ -418,10 +497,25 @@ async function matchCohort(catalystApp, pid) {
     const a = solos.shift();
     const b = solos.shift();
     const groupId = crypto.randomBytes(8).toString("hex");
+
+    // Claim both before the group is created or a single mail goes out. A half-claimed
+    // pair would strand one person in a group of one, so the first claim is given back
+    // if the second fails. The person who could not be claimed is gone from the pool
+    // either way — a parallel run has already placed them; the other returns to the queue.
+    if (!(await claimSignup(catalystApp, a.ROWID, groupId))) {
+      solos.unshift(b); continue;
+    }
+    if (!(await claimSignup(catalystApp, b.ROWID, groupId))) {
+      await releaseSignup(catalystApp, a.ROWID, groupId);
+      solos.unshift(a);
+      continue;
+    }
+
     const optinToken = crypto.randomBytes(16).toString("hex"); // a new 2-group may grow
     await groupsT.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
+    // Separate from the claim: the claim owns group_id/status and must stay conditional.
     for (const m of [a, b]) {
-      await signups.updateRow({ ROWID: m.ROWID, group_id: groupId, status: "grouped", waiting_since: null });
+      await signups.updateRow({ ROWID: m.ROWID, waiting_since: null });
     }
     const optinLink = PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe";
     await zeptoSend(a.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(b.email, optinLink), meta);
@@ -434,7 +528,10 @@ async function matchCohort(catalystApp, pid) {
     for (const g of (await readGroups(catalystApp, safePid)).filter(isOpen)) {
       const members = await membersOf(catalystApp, g.group_id);
       if (members.length !== 2) continue; // only 2-groups may grow (DL-035 max size 3)
-      await signups.updateRow({ ROWID: solo.ROWID, group_id: g.group_id, status: "grouped", waiting_since: null });
+      // If the claim fails, a parallel run has already placed this person. Nothing to do
+      // and nothing to undo — the group stays open for whoever comes next.
+      if (!(await claimSignup(catalystApp, solo.ROWID, g.group_id))) { solos = []; break; }
+      await signups.updateRow({ ROWID: solo.ROWID, waiting_since: null });
       await groupsT.updateRow({ ROWID: g.ROWID, open_to_new: false }); // now full
       await zeptoSend(solo.email, "Du bist in eine Peergruppe aufgenommen", asyncMatchJoinBody(members.map((m) => m.email)), meta);
       for (const m of members) {
@@ -493,7 +590,7 @@ async function broadcastIfDue(catalystApp, cohort) {
 }
 
 app.get("/", (req, res) => {
-  res.status(200).json({ status: "ok", message: "peer is live" });
+  res.status(200).json({ status: "ok", message: "peer is live", build: BUILD });
 });
 
 // --- Enrolment (DL-036) ---
@@ -646,12 +743,13 @@ app.post("/enrol-confirm", async (req, res) => {
     const formed = cfgRows && cfgRows.length ? cfgRows[0].CohortConfig.formed_time : null;
     if (formed) {
       await table.updateRow({ ROWID: row.ROWID, waiting_since: catalystNow(0) });
-      const m = await matchCohort(catalystApp, safePid);
-      waiting = m.waiting.indexOf(row.email) !== -1;
-      if (waiting) {
-        const meta = await loadCohortMeta(catalystApp, safePid);
-        await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
-      }
+      // No immediate match any more (2026-09-10): matching happens only in the serialised
+      // cron sweep, so a late joiner is always waiting at this point and the wait-pool mail
+      // is unconditional. The ordering worry it used to guard against — "you are waiting"
+      // arriving seconds before "your group is set" — is gone with the immediate match.
+      waiting = true;
+      const meta = await loadCohortMeta(catalystApp, safePid);
+      await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
     }
 
     res.status(200).json({ status: "ok", ok: true, waiting: waiting });
@@ -874,13 +972,12 @@ app.post("/pool-join", async (req, res) => {
       ROWID: row.ROWID, status: "enrolled", group_id: null, pool_token: null, waiting_since: catalystNow(0),
     });
 
-    const m = await matchCohort(catalystApp, safePid);
-    const stillWaiting = m.waiting.indexOf(String(row.email).toLowerCase()) !== -1;
-    if (stillWaiting) {
-      const meta = await loadCohortMeta(catalystApp, safePid);
-      await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
-    }
-    res.status(200).json({ status: "ok", ok: true, matched: !stillWaiting });
+    // No immediate match any more (2026-09-10, see matchCohort): the pool is worked by the
+    // serialised cron sweep, so entering it always means waiting. `matched` stays in the
+    // response contract and is now always false — the client already handles that branch.
+    const meta = await loadCohortMeta(catalystApp, safePid);
+    await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
+    res.status(200).json({ status: "ok", ok: true, matched: false });
   } catch (err) {
     console.log(err);
     res.status(200).json({ status: "ok", ok: false, reason: "invalid" });
