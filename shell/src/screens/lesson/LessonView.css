@@ -10,7 +10,7 @@
 .h30-lesson__side {
   flex: 0 0 320px; width: 320px; box-sizing: border-box;
   background: var(--color-bg-surface); border-right: 1px solid var(--color-border-default);
-  padding: 48px 24px;
+  padding: var(--space-9) var(--space-6);
 }
 .h30-lesson__side-title { color: var(--color-text-muted); margin: 0 0 var(--space-4); }
 .h30-lesson__lessons { list-style: none; margin: 0; padding: 0; }
@@ -27,7 +27,14 @@
 .h30-lesson__sections a.is-current { color: var(--color-text-brand); }
 
 /* Reading area — centred column. */
-.h30-lesson__main { flex: 1 1 auto; display: flex; justify-content: center; padding: 48px 60px 80px; }
+/* Nav-Stufe: oben 48, unten 96. Der seitliche 60er ist KEIN Seitenrand der Seite,
+   sondern der Abstand zwischen Sidebar und Lesespalte; er hat keine Entsprechung in
+   der Token-Skala (32 oder 64 waeren die Nachbarn) und bleibt bis zu einem Zielwert
+   stehen. */
+.h30-lesson__main {
+  flex: 1 1 auto; display: flex; justify-content: center;
+  padding: var(--space-9) 60px var(--space-12);
+}
 .h30-lesson__col {
   width: 720px; max-width: 100%;
   display: flex; flex-direction: column; gap: var(--space-5); /* block-to-block rhythm */
@@ -43,16 +50,20 @@
 .h30-lesson__phase-end { text-align: center; display: flex; flex-direction: column; gap: var(--space-4); align-items: center; padding-top: var(--space-6); }
 .h30-lesson__phase-end-actions { display: flex; gap: var(--space-3); flex-wrap: wrap; justify-content: center; }
 
-.h30-lesson__missing { padding: 40px; color: var(--color-text-error); }
+.h30-lesson__missing { padding: var(--space-8); color: var(--color-text-error); }
 
 /* --- Mobile bottom-sheet course nav (Figma 58:549 / 59:626). --- */
 /* Sheet + scrim exist only on mobile; hidden on desktop where the sidebar shows. */
 .h30-lesson__sheet, .h30-lesson__scrim { display: none; }
 
+/* Bewusst 900, nicht die Projektschwelle 768 (A4, 2026-09-10): hier entscheidet die
+   Sidebar, nicht das Seitengeruest. Bei 768px Viewport blieben der Lesespalte
+   768 - 320 (Sidebar) - 1 (Linie) - 120 (Raender) = 327px; bei 900px sind es 459px.
+   Die Spalte ist auf 720 ausgelegt -- 327px waere keine Lesespalte mehr. */
 @media (max-width: 900px) {
   .h30-lesson__side { display: none; }
   /* Reading column gets bottom room so the 50px grip never covers the last block. */
-  .h30-lesson__main { padding: 24px 20px calc(48px + 50px); }
+  .h30-lesson__main { padding: var(--space-6) var(--space-5) calc(var(--space-9) + 50px); }
 
   .h30-lesson__scrim {
     display: block; position: fixed; inset: 0; z-index: 39;
@@ -84,5 +95,5 @@
   .h30-lesson__grip-chevron { transition: transform 0.2s ease; }
   .h30-lesson__sheet[data-open='true'] .h30-lesson__grip-chevron { transform: rotate(180deg); }
 
-  .h30-lesson__sheet-body { overflow-y: auto; padding: var(--space-2) 24px 24px; }
+  .h30-lesson__sheet-body { overflow-y: auto; padding: var(--space-2) var(--space-6) var(--space-6); }
 }

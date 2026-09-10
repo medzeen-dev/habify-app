@@ -9,7 +9,7 @@
   flex: 1;
   display: flex;
   justify-content: center;
-  padding: 28px var(--space-5) 64px;
+  padding: 28px var(--space-5) var(--space-10);
 }
 
 .h30-wizard__col {
@@ -23,7 +23,7 @@
 
 @media (min-width: 768px) {
   .h30-wizard__content {
-    padding: 64px var(--space-7) 80px;
+    padding: var(--space-11) var(--space-7) var(--space-12);
   }
 }
 

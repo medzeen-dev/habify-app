@@ -9,7 +9,7 @@
   flex: 1;
   display: flex;
   justify-content: center;
-  padding: 40px var(--space-5);
+  padding: var(--space-8) var(--space-5);
 }
 
 .h30-entry__col {
@@ -23,7 +23,7 @@
 
 @media (min-width: 768px) {
   .h30-entry__content {
-    padding: 96px var(--space-7);
+    padding: var(--space-11) var(--space-7) var(--space-12);
   }
 }
 

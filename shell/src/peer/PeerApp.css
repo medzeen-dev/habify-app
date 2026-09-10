@@ -1,7 +1,7 @@
 /* Peer-group pages (DL-053). Logos-only header + centred column max 640. */
 .h30-peer { min-height: 100vh; background: var(--color-bg-page); }
 
-.h30-peer__content { display: flex; justify-content: center; padding: 48px 24px 80px; }
+.h30-peer__content { display: flex; justify-content: center; padding: var(--space-11) var(--space-7) var(--space-12); }
 .h30-peer__col {
   width: 640px; max-width: 100%;
   display: flex; flex-direction: column; gap: var(--space-5);
@@ -48,8 +48,11 @@
 .h30-peer__mirror-label { color: var(--color-text-muted); margin: 0 0 var(--space-1); }
 .h30-peer__mirror-email { color: var(--color-text-primary); margin: 0; word-break: break-all; }
 
-@media (max-width: 900px) {
-  .h30-peer__content { padding: 24px 20px 48px; }
+/* Projektschwelle 768 (A4, 2026-09-10). 767.98 statt 768: bei exakt 768px wuerden
+   sonst diese Query und die min-width-768-Regeln zugleich gelten. Zuvor 900 --
+   ohne Grund, die 640er-Spalte plus 32er-Rand braucht nur 704px. */
+@media (max-width: 767.98px) {
+  .h30-peer__content { padding: var(--space-6) var(--space-5) var(--space-9); }
 
   /* Mobile weicht hier bewusst vom Desktop ab (Figma 1:310 / 1:330): aus dem einen
      Container mit Trennlinien werden drei eigenstaendige Karten, und das Icon steht
