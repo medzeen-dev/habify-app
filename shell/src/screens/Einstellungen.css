@@ -33,7 +33,7 @@
 
 @media (min-width: 768px) {
   .h30-settings__content {
-    padding: var(--space-8) var(--space-6);
+    padding: var(--space-9) var(--space-7) var(--space-12);
   }
 }
 
