@@ -313,6 +313,44 @@ function broadcastBody(count, optinLink) {
     "<p>Wenn das für euch nicht passt, ignoriere diese E-Mail einfach.</p>";
 }
 
+/**
+ * Claim a signup for a group — the step that makes concurrent runs safe.
+ *
+ * `matchCohort` runs from three places: the cron sweep, `/pool-join` and `/exit-confirm`.
+ * Only the sweep passes through the job pool, so two runs genuinely overlap as soon as two
+ * people enter the wait pool at the same moment. Both then read the same solos and pair the
+ * same person twice: two PeerGroups rows, one of them stranded, `group_id` overwritten by
+ * whoever wrote last, and two "your group is set" mails carrying *different* opt-in links.
+ *
+ * A plain `updateRow` cannot prevent that — read and write are separate. A conditional
+ * UPDATE can, because the datastore evaluates condition and write as one operation.
+ * Measured 2026-09-10: a hit returns the row, a miss returns `[]`. That length is the whole
+ * signal. (The cache segment cannot serve here: `put` overwrites an existing key silently,
+ * so a cache "lock" would be handed to both runs at once.)
+ *
+ * Returns true if this run won the row, false if someone else was there first.
+ */
+async function claimSignup(catalystApp, rowid, groupId) {
+  const rows = await catalystApp.zcql().executeZCQLQuery(
+    "UPDATE PeerSignups SET group_id = '" + String(groupId).replace(/'/g, "") + "', status = 'grouped'" +
+    " WHERE ROWID = " + String(rowid).replace(/[^0-9]/g, "") + " AND group_id IS NULL"
+  );
+  return !!(rows && rows.length);
+}
+
+/**
+ * Give a claimed row back. Only ever called when a pairing could not be completed — the
+ * `group_id` condition makes sure a run releases nothing but its own claim, even if the
+ * row has meanwhile been taken over by someone else.
+ */
+async function releaseSignup(catalystApp, rowid, groupId) {
+  await catalystApp.zcql().executeZCQLQuery(
+    "UPDATE PeerSignups SET group_id = NULL, status = 'enrolled'" +
+    " WHERE ROWID = " + String(rowid).replace(/[^0-9]/g, "") +
+    " AND group_id = '" + String(groupId).replace(/'/g, "") + "'"
+  );
+}
+
 // Form all groups for one cohort: shuffle enrolled (ungrouped) members, partition into
 // 2–3, create PeerGroups rows, assign members, email everyone. Idempotent per cohort
 // via CohortConfig.formed_time (set by the caller's guard).
@@ -323,7 +361,6 @@ async function formCohort(catalystApp, pid) {
     "SELECT ROWID, email FROM PeerSignups WHERE pid = '" + safePid + "' AND status = 'enrolled'"
   );
   const members = (rows || []).map((r) => r.PeerSignups);
-  const signups = catalystApp.datastore().table("PeerSignups");
   const groups = catalystApp.datastore().table("PeerGroups");
   let formedGroups = 0;
 
@@ -335,13 +372,26 @@ async function formCohort(catalystApp, pid) {
       const grp = members.slice(idx, idx + size);
       idx += size;
       const groupId = crypto.randomBytes(8).toString("hex");   // 16 hex
-      const optinToken = size === 2 ? crypto.randomBytes(16).toString("hex") : null; // only 2-groups can grow
-      await groups.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
+
+      // Claim every member before the group exists. Someone a parallel run has already
+      // grouped must not be pulled into a second group, and must not receive a second
+      // "your group is set" mail. What is left after claiming is the real group.
+      const claimed = [];
       for (const m of grp) {
-        await signups.updateRow({ ROWID: m.ROWID, group_id: groupId, status: "grouped" });
+        if (await claimSignup(catalystApp, m.ROWID, groupId)) claimed.push(m);
       }
-      for (const m of grp) {
-        const others = grp.filter((x) => x.email !== m.email).map((x) => x.email);
+      if (claimed.length < 2) {
+        // A group of one is no group — hand the row back so the wait pool can use it.
+        for (const m of claimed) await releaseSignup(catalystApp, m.ROWID, groupId);
+        continue;
+      }
+
+      // Decided after claiming, not before: only an actual 2-group may grow, and losing a
+      // member to a parallel run can turn a planned 3 into a 2.
+      const optinToken = claimed.length === 2 ? crypto.randomBytes(16).toString("hex") : null;
+      await groups.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
+      for (const m of claimed) {
+        const others = claimed.filter((x) => x.email !== m.email).map((x) => x.email);
         const optinLink = optinToken ? (PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe") : null;
         await zeptoSend(m.email, "Deine habify30-Peergruppe steht", formationBody(others, optinLink), meta);
       }
@@ -418,10 +468,23 @@ async function matchCohort(catalystApp, pid) {
     const a = solos.shift();
     const b = solos.shift();
     const groupId = crypto.randomBytes(8).toString("hex");
+
+    // Claim both before the group is created or a single mail goes out. A half-claimed
+    // pair would strand one person in a group of one, so the first claim is given back
+    // if the second fails. The person who could not be claimed is gone from the pool
+    // either way — a parallel run has already placed them; the other returns to the queue.
+    if (!(await claimSignup(catalystApp, a.ROWID, groupId))) { solos.unshift(b); continue; }
+    if (!(await claimSignup(catalystApp, b.ROWID, groupId))) {
+      await releaseSignup(catalystApp, a.ROWID, groupId);
+      solos.unshift(a);
+      continue;
+    }
+
     const optinToken = crypto.randomBytes(16).toString("hex"); // a new 2-group may grow
     await groupsT.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
+    // Separate from the claim: the claim owns group_id/status and must stay conditional.
     for (const m of [a, b]) {
-      await signups.updateRow({ ROWID: m.ROWID, group_id: groupId, status: "grouped", waiting_since: null });
+      await signups.updateRow({ ROWID: m.ROWID, waiting_since: null });
     }
     const optinLink = PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe";
     await zeptoSend(a.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(b.email, optinLink), meta);
@@ -434,7 +497,10 @@ async function matchCohort(catalystApp, pid) {
     for (const g of (await readGroups(catalystApp, safePid)).filter(isOpen)) {
       const members = await membersOf(catalystApp, g.group_id);
       if (members.length !== 2) continue; // only 2-groups may grow (DL-035 max size 3)
-      await signups.updateRow({ ROWID: solo.ROWID, group_id: g.group_id, status: "grouped", waiting_since: null });
+      // If the claim fails, a parallel run has already placed this person. Nothing to do
+      // and nothing to undo — the group stays open for whoever comes next.
+      if (!(await claimSignup(catalystApp, solo.ROWID, g.group_id))) { solos = []; break; }
+      await signups.updateRow({ ROWID: solo.ROWID, waiting_since: null });
       await groupsT.updateRow({ ROWID: g.ROWID, open_to_new: false }); // now full
       await zeptoSend(solo.email, "Du bist in eine Peergruppe aufgenommen", asyncMatchJoinBody(members.map((m) => m.email)), meta);
       for (const m of members) {
