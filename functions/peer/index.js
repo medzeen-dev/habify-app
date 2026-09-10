@@ -19,8 +19,10 @@
 //
 // Lifecycle (DL-087): exit is FINAL — it removes the address from the list and does not
 // re-pool anyone. Wait-pool entry is always an active act: a late joiner's enrolment, or
-// a dissolved group's last member clicking their link. Matching runs immediately at both
-// entry points; /run-matching is the safety net and the home of the 3-day broadcast.
+// a dissolved group's last member clicking their link. Matching itself runs ONLY in
+// /run-matching, the serialised cron sweep — see matchCohort. Entering the pool therefore
+// always means waiting for the next sweep; /run-matching is also the home of the 3-day
+// broadcast.
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
@@ -43,6 +45,21 @@ app.use(express.urlencoded({ extended: true }));
 // reject a response with multiple Access-Control-Allow-Origin headers even when the
 // values match. New origin ⇒ register an Authorized Domain, do not add headers here.
 const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
+
+/**
+ * Build marker — bump this whenever a deploy's effect has to be verifiable from outside.
+ *
+ * "DEPLOYMENT SUCCESSFUL" does not mean the running code is the deployed code: serverless
+ * keeps warm instances alive across a deploy, and `modified_time` on the function says
+ * when it was written, not which build answers the next request. Without a marker the only
+ * way to tell is to reconstruct it from the data a test left behind — which is guesswork
+ * (2026-09-10: two concurrency tests produced defects that could not come from the new
+ * code, and the question stayed open). `GET /` settles it in one call.
+ *
+ * Do NOT read it from a secret or an env var: `Get_Function` returns every environment
+ * variable in cleartext, so anything placed there is exposed by an ordinary read.
+ */
+const BUILD = "2026-09-10-sweep-only";
 
 const EMAIL_FORMAT = /^[^\s@']+@[^\s@']+\.[a-z]{2,}$/i;
 const TOKEN_TTL_HOURS = 24;
@@ -314,21 +331,23 @@ function broadcastBody(count, optinLink) {
 }
 
 /**
- * Claim a signup for a group — the step that makes concurrent runs safe.
+ * Claim a signup for a group before writing anything else.
  *
- * `matchCohort` runs from three places: the cron sweep, `/pool-join` and `/exit-confirm`.
- * Only the sweep passes through the job pool, so two runs genuinely overlap as soon as two
- * people enter the wait pool at the same moment. Both then read the same solos and pair the
- * same person twice: two PeerGroups rows, one of them stranded, `group_id` overwritten by
- * whoever wrote last, and two "your group is set" mails carrying *different* opt-in links.
+ * **This is not a lock, and must not be relied on as one.** Measured on Development
+ * 2026-09-10: under real concurrency two parallel runs both reported winning the claim on
+ * the same row, and one then overwrote the other's assignment. The datastore does not
+ * serialise `WHERE group_id IS NULL` against a competing write. The same measurement
+ * disqualified the two other candidates — a cache-segment key (`put` overwrites silently)
+ * and a unique column (4 of 10 concurrent insert pairs produced duplicates in a column
+ * declared unique). Catalyst offers no application-level mutual exclusion; the only
+ * serialisation this system has is a job pool with max count 1.
  *
- * A plain `updateRow` cannot prevent that — read and write are separate. A conditional
- * UPDATE can, because the datastore evaluates condition and write as one operation.
- * Measured 2026-09-10: a hit returns the row, a miss returns `[]`. That length is the whole
- * signal. (The cache segment cannot serve here: `put` overwrites an existing key silently,
- * so a cache "lock" would be handed to both runs at once.)
+ * What it still buys, and why it stays: the claim runs *before* the group row exists, so a
+ * pairing that cannot be completed leaves no PeerGroups row behind, and nobody is put in a
+ * group of one. Under the serialised sweep (matchCohort's header) there is no competing
+ * writer anyway — this is the second line, not the first.
  *
- * Returns true if this run won the row, false if someone else was there first.
+ * Returns true if this run got the row, false if it was already taken.
  */
 async function claimSignup(catalystApp, rowid, groupId) {
   const rows = await catalystApp.zcql().executeZCQLQuery(
@@ -455,6 +474,16 @@ function isOpen(g) {
  * Returns the emails still waiting afterwards, so the caller can send the wait-pool
  * information mail to someone who has just entered and was not matched immediately.
  */
+/**
+ * **Call this from the cron sweep only.** `/run-matching` runs through the job pool
+ * `peerjobs`, whose max count of 1 is the only serialisation Catalyst gives us (measured
+ * 2026-09-10 — see claimSignup). Calling it from a participant-facing route puts a second
+ * writer on the same wait pool, and two of those pair the same person into two groups.
+ *
+ * Until 2026-09-10 `/enrol-confirm` and `/pool-join` called it for an immediate match. They
+ * no longer do: entering the pool now always means waiting for the next sweep. That costs
+ * up to an hour of reaction time and is the price of correctness.
+ */
 async function matchCohort(catalystApp, pid) {
   const safePid = String(pid).replace(/'/g, "");
   const meta = await loadCohortMeta(catalystApp, safePid);
@@ -473,7 +502,9 @@ async function matchCohort(catalystApp, pid) {
     // pair would strand one person in a group of one, so the first claim is given back
     // if the second fails. The person who could not be claimed is gone from the pool
     // either way — a parallel run has already placed them; the other returns to the queue.
-    if (!(await claimSignup(catalystApp, a.ROWID, groupId))) { solos.unshift(b); continue; }
+    if (!(await claimSignup(catalystApp, a.ROWID, groupId))) {
+      solos.unshift(b); continue;
+    }
     if (!(await claimSignup(catalystApp, b.ROWID, groupId))) {
       await releaseSignup(catalystApp, a.ROWID, groupId);
       solos.unshift(a);
@@ -559,7 +590,7 @@ async function broadcastIfDue(catalystApp, cohort) {
 }
 
 app.get("/", (req, res) => {
-  res.status(200).json({ status: "ok", message: "peer is live" });
+  res.status(200).json({ status: "ok", message: "peer is live", build: BUILD });
 });
 
 // --- Enrolment (DL-036) ---
@@ -712,12 +743,13 @@ app.post("/enrol-confirm", async (req, res) => {
     const formed = cfgRows && cfgRows.length ? cfgRows[0].CohortConfig.formed_time : null;
     if (formed) {
       await table.updateRow({ ROWID: row.ROWID, waiting_since: catalystNow(0) });
-      const m = await matchCohort(catalystApp, safePid);
-      waiting = m.waiting.indexOf(row.email) !== -1;
-      if (waiting) {
-        const meta = await loadCohortMeta(catalystApp, safePid);
-        await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
-      }
+      // No immediate match any more (2026-09-10): matching happens only in the serialised
+      // cron sweep, so a late joiner is always waiting at this point and the wait-pool mail
+      // is unconditional. The ordering worry it used to guard against — "you are waiting"
+      // arriving seconds before "your group is set" — is gone with the immediate match.
+      waiting = true;
+      const meta = await loadCohortMeta(catalystApp, safePid);
+      await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
     }
 
     res.status(200).json({ status: "ok", ok: true, waiting: waiting });
@@ -940,13 +972,12 @@ app.post("/pool-join", async (req, res) => {
       ROWID: row.ROWID, status: "enrolled", group_id: null, pool_token: null, waiting_since: catalystNow(0),
     });
 
-    const m = await matchCohort(catalystApp, safePid);
-    const stillWaiting = m.waiting.indexOf(String(row.email).toLowerCase()) !== -1;
-    if (stillWaiting) {
-      const meta = await loadCohortMeta(catalystApp, safePid);
-      await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
-    }
-    res.status(200).json({ status: "ok", ok: true, matched: !stillWaiting });
+    // No immediate match any more (2026-09-10, see matchCohort): the pool is worked by the
+    // serialised cron sweep, so entering it always means waiting. `matched` stays in the
+    // response contract and is now always false — the client already handles that branch.
+    const meta = await loadCohortMeta(catalystApp, safePid);
+    await zeptoSend(row.email, "Du stehst auf der Warteliste für eine Peergruppe", waitPoolInfoBody(), meta);
+    res.status(200).json({ status: "ok", ok: true, matched: false });
   } catch (err) {
     console.log(err);
     res.status(200).json({ status: "ok", ok: false, reason: "invalid" });
