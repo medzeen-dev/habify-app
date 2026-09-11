@@ -123,8 +123,14 @@ abgenommen**.
 ---
 
 ## 6. Wartelisten-Info
-**Auslöser:** jemand ist in den Wartepool eingetreten **und wurde nicht sofort zugeordnet**
-(Nachzügler nach der Anmeldung, oder Klick auf den Wartepool-Link)
+**Auslöser:** jemand ist in den Wartepool eingetreten (Nachzügler nach der Anmeldung, oder
+Klick auf den Wartepool-Link). Seit DL-094 (2026-09-11) **immer** — es gibt keinen Sofort-Match
+mehr, die Zuordnung läuft nur noch im stündlichen Sweep. Vorher wurde diese Mail nur gesendet,
+wenn der Sofort-Match leer ausging.
+
+> **Copy-Hinweis, offen:** Der dritte Spiegelstrich sagt „bekommst du **sofort** eine E-Mail".
+> Seit DL-094 ist das „innerhalb einer Stunde". Der Text ist abgenommen und wird hier nicht
+> stillschweigend geändert — die Anpassung ist eine Entscheidung.
 **Empfänger:** diese Person · **Quelle:** DL-087
 **Betreff:** Du stehst auf der Warteliste für eine Peergruppe
 

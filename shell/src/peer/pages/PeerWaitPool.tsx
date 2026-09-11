@@ -19,6 +19,9 @@ export function PeerWaitPool() {
     joinPool(pt).then((r) => {
       if (!live) return
       if (!r.ok) { setState('invalid'); return }
+      // `matched` is always false since DL-094 (2026-09-11): matching runs only in the hourly
+      // sweep, never at pool entry. The branch stays because the API contract keeps the field;
+      // the 'matched' screen below is unreachable until that changes.
       setState(r.matched ? 'matched' : 'waiting')
     })
     return () => { live = false }
