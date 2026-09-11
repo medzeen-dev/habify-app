@@ -111,6 +111,38 @@ cd C:\repos\habify-app ; catalyst login --dc eu     # Browser-OAuth, EU
   laufenden Dev-Stand vor- oder zurückliegt (der Editor ist die Ausführungs-Source-of-Truth) —
   siehe `functions/README.md`, damit ein Deploy nichts ungewollt überschreibt.
 
+### 4.1 Slate-Apps (Frontend) nach Development
+
+Zwei Slate-Apps, zwei Origins, zwei Builds — nie ein Output auf beide (DL-086):
+
+| App | Build | Output | Dev-Domain |
+|---|---|---|---|
+| `shell` | `npm run build:dev` | `shell/dist/` | `app-dev.habify30.k-a-d-o.com` (seit 2026-09-11) |
+| `peerpages` | `npm run build:peer:dev` | `shell/dist-peer/` | `peer-dev.habify30.k-a-d-o.com` (seit 2026-09-08) |
+
+`build:dev` und `build:peer:dev` bauen gegen das **Dev-Backend** (`.env.devbackend`); `build`
+und `build:peer` gegen das Prod-Gateway (`.env.production`). Beide Paare schreiben in dasselbe
+Verzeichnis — nach einem Prod-Build vor dem nächsten Dev-Deploy den Dev-Build nachziehen.
+Der Post-Build-Schritt (`scripts/finalize-shell.mjs` bzw. `finalize-peer.mjs`) schreibt die
+`.catalyst/slate-config.toml` ins Output-Verzeichnis, weil jeder Build es leert.
+
+```powershell
+cd C:epos\habify-app\shell ; npm run build:dev
+cd C:epos\habify-app ; catalyst deploy slate shell --dc eu --org 20116360871 -m "<kurz>"
+```
+Der App-Name ist Pflicht, sonst deployt die CLI alle Slate-Einträge aus `catalyst.json`.
+- ⚠ **`catalyst login` und der Deploy laufen im Host-Terminal**, nicht in der Agent-Shell
+  (Sandbox, siehe Gotchas). Die Agent-Shell baut, der Mensch deployt.
+- ⚠ **Neue App: Cache sofort abschalten**, vor dem ersten Browser-Besuch (DL-091): Konsole →
+  Slate → App → Deployment → Configuration → General Settings → Cache → *Disable*. Gegenprobe:
+  `curl -sI https://<app>.onslate.eu/` muss `cache-control: no-store` zeigen.
+- Domain-Mapping: TXT-Variante für den Ownership-Nachweis, TXT vor Schritt 2 löschen, dann
+  CNAME auf `slate-<deployment-id>-eu.nimbuspop.com` (habify `Catalyst_Platform_Capabilities.md`
+  E3). Die DNS-Records liegen bei OVH (Zone `k-a-d-o.com`, Subdomain `<name>.habify30`).
+- Authorized Domain in Development per MCP (`Create_CORS_Domain`, nackter Hostname). Gemessen
+  2026-09-11: eine per Slate gemappte Custom Domain wird vom Gateway schon **vor** dem Eintrag
+  akzeptiert, die `onslate.eu`-Standard-URL nicht (E4). Der Eintrag wird trotzdem gesetzt.
+
 ---
 
 ## Teil 5 — Claude-Code-Connectors autorisieren (interaktiv)
