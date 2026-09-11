@@ -5,7 +5,8 @@
       "accesscontrol",
       "recovery",
       "zohoformswebhook",
-      "peer"
+      "peer",
+      "peersweep"
     ]
   },
   "slate": [
