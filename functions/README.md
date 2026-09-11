@@ -2,7 +2,7 @@
 
 Overview of all Zoho Catalyst Advanced I/O Functions backing the Habify30 Web Export resilience/recovery layer and the Zoho Forms integration. Each function has its own subfolder with a backup copy of `index.js` plus a detailed README; this file is the entry point — start here, then follow the links for implementation detail.
 
-Catalyst's own code editor (Development/Production environments) is the source of truth for execution. These repo copies exist so the code isn't only living inside the console, and so changes are visible in diffs alongside the rest of the canonical documentation.
+**The repo is the source** (kado DL-2026-018, `VTR-catalyst`): functions are deployed from here — Development via the CLI, Production via the console's environment promotion. The console's code editor is not used for writing. Until the first CLI deploy of a given function, its console state must be reconciled against the repo (differences are pulled *into* the repo, never overwritten) — record the result per function in the table below. Earlier practice treated the console as source of truth and these files as backups; that is history, not the rule.
 
 - Project: Habify30 (Catalyst project ID `20116360871`)
 - Stack: Node 24, Advanced I/O (Express + `zcatalyst-sdk-node`)

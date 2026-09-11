@@ -11,6 +11,7 @@ Architektur leben im Repo `habify` (`decisions/`), nicht hier.
 | [`docs/env-setup.md`](docs/env-setup.md) | Entwicklungsumgebung auf einem Windows-Gerät aufsetzen, gegen Catalyst Development deployen |
 | [`TRANSACTIONAL_EMAILS.md`](TRANSACTIONAL_EMAILS.md) | die Transaktionsmails der App |
 
-Die Dokumentation wird mit dem Code versioniert und ist kein Kanon-Eintrag (Kado-Verfassung
-§13, DL-2026-016). Entscheidungen, die über dieses Repo hinaus binden, gehen über den
+Die Arbeitsregeln des Repos stehen in [`CLAUDE.md`](CLAUDE.md), die Governance in
+`kado/decision-logs/DL-2026-018`. Die Dokumentation wird mit dem Code versioniert und ist kein
+Kanon-Eintrag (Kado-Verfassung §13, DL-2026-016). Entscheidungen, die über dieses Repo hinaus binden, gehen über den
 Decision-Flow nach `kado` bzw. `habify`.
