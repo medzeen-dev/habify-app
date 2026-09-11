@@ -1,8 +1,20 @@
 # peer — peer-group backend (Phase 1)
 
 pid-only Catalyst Advanced-I/O function for the peer-group pages (DL-053 / DL-035–037 /
-DL-086). **No `user_id` is ever read or written here** (DL-053). One function, three
-routes; the client (`shell/src/peer/lib/peerApi.ts`) calls them through the peer origin.
+DL-086). **No `user_id` is ever read or written here** (DL-053). One function, the
+participant-facing routes; the client (`shell/src/peer/lib/peerApi.ts`) calls them through
+the peer origin. **Everything scheduled — formation, wait-pool matching, the 3-day
+broadcast — lives in the Job Function [`peersweep`](../peersweep/README.md), not here**
+(DL-094).
+
+## Build marker
+`GET /` answers `{ status:"ok", message:"peer is live", build:"<marker>" }`. `build` is the
+constant `BUILD` at the top of `index.js` — bump it in the same commit as any change whose
+deployment has to be verifiable, and read it from the serving host after the deploy.
+"DEPLOYMENT SUCCESSFUL" is not that check: warm instances keep answering with the previous
+build for a while, and the function's `modified_time` says when it was written, not which
+build answers. Never move the marker into an env var — `Get_Function` returns those in
+cleartext (habify `Catalyst_Platform_Capabilities.md` E2).
 
 ## Routes
 - `POST /enrol` — `{ pid, email, consent:true }` → `{ ok }`. Requires consent (DL-036),
@@ -26,10 +38,11 @@ routes; the client (`shell/src/peer/lib/peerApi.ts`) calls them through the peer
   gets an opt-in link; a group left with 1 is dissolved and its last member is mailed a
   wait-pool link.
 - `POST /pool-join` — `{ pt }` → `{ ok, matched }`. The dissolved-group link: the click is
-  the active act of entering the wait pool (DL-087). Matches immediately.
-- `POST /run-matching` — admin-key guarded cron sweep: wait-pool matching for every formed
-  cohort + the 3-day broadcast. Matching also runs inline at both pool entries, so this is
-  the safety net; the broadcast is inherently time-based and lives only here.
+  the active act of entering the wait pool (DL-087). **Does not match** — `matched` stays
+  `false`; the person waits for the next hourly sweep (`peersweep`, DL-094) and receives the
+  wait-pool information mail.
+- `/run-formation` and `/run-matching` **no longer exist** (404). Both sweeps moved into
+  `peersweep` on 2026-09-11; there is no admin route and no `ADMIN_KEY` any more.
 
 ## Data Store tables (create in the Catalyst console / CLI before first use)
 
@@ -78,16 +91,21 @@ Functions → *(function)* → **Configuration** → Environment Variables → *
 (per environment — pick Development/Production in the console's environment switcher).
 The same tab's **Function Triggers** block is where the formation Cron is configured.
 
-Set on **`peer`**: `ADMIN_KEY`, `ZEPTOMAIL_TOKEN`, `ZEPTOMAIL_FROM`, `PEER_ORIGIN`.
-Nothing has to be set on **`accesscontrol`** — it used to need `PEER_ORIGIN` for its own
-CORS allowlist, which is obsolete since CORS moved to the gateway (see below). Secrets go
-in the console, never in git.
+Set on **`peer`** and, with the same values, on **`peersweep`**: `ZEPTOMAIL_TOKEN`,
+`ZEPTOMAIL_FROM`, `PEER_ORIGIN`. Nothing has to be set on **`accesscontrol`** — it used to
+need `PEER_ORIGIN` for its own CORS allowlist, which is obsolete since CORS moved to the
+gateway (see below). Secrets go in the console, never in git, and are never read back.
+**A Production deployment of a function wipes that function's Production env vars** — set
+them again after every Production deploy (Capabilities E2/E5); `PEER_ORIGIN` and the
+ZeptoMail pair fail open, so a missing value does not show as an error.
 - `PEER_ORIGIN` — the peer pages' own origin. No trailing slash; links are built as
   `PEER_ORIGIN + "/?token=…"`. Per environment, because Development and Production are
   separate Slate apps:
   - Development: **`https://peer-dev.habify30.k-a-d-o.com`** — live since 2026-09-08,
     Slate app `peerpages`, deployment `default`.
-  - Production: **`https://peer.habify30.k-a-d-o.com`** — reserved, not yet created.
+  - Production: **`https://peer.habify30.k-a-d-o.com`** — set as env var; the DNS record
+    and the Slate domain mapping do not exist yet (see `peersweep` README and habify
+    Capabilities A5 for the cache blocker).
   Both follow the existing `api.habify30.k-a-d-o.com` pattern. Setting up a further
   environment: see Catalyst_Platform_Capabilities.md Cluster E3 in the habify repo — the
   ownership record must be the TXT variant; the CNAME variant Catalyst offers is broken.
@@ -100,30 +118,39 @@ in the console, never in git.
   and `accesscontrol` (DL-082 §1). Consequence: **the Authorized Domain is what makes the
   browser calls work; `PEER_ORIGIN` is what makes the mail links work.** Both are needed,
   for different reasons, and one cannot substitute for the other.
-- `ZEPTOMAIL_TOKEN` — ZeptoMail Send-Mail API key (**secret**). Without it, `/exit-request`
-  still returns ok but sends nothing (logs a notice).
+- `ZEPTOMAIL_TOKEN` — ZeptoMail Send-Mail API key (**secret**). Without it, every sending
+  route still returns ok but sends nothing (logs a notice). Production has none until
+  OQ-037 is settled.
 - `ZEPTOMAIL_FROM` — a verified ZeptoMail sender address.
-- `ADMIN_KEY` — shared secret guarding `POST /run-formation` (Phase 2a). The formation
-  cron sends it; without it set, `/run-formation` refuses (403). Never in git.
+- `ADMIN_KEY` — **retired** (DL-094). Removed from the code and from Development; a stale
+  value in a Production view is inert.
 
-## Formation cron (Phase 2a, DL-035)
-`POST /run-formation` forms every cohort whose `peer_group_cutoff_date` has passed and
-whose `formed_time` is still empty (idempotent). Wire a **Catalyst Cron** to call it
-daily with `{ "key": "<ADMIN_KEY>" }` in the body. Manual/testing: `{ "key": …, "pid":
-"<pid>", "force": true }` forms one named cohort regardless of cutoff. The opt-in link
-in the formation email points at `PEER_ORIGIN/?gt=<token>#/gruppe`.
+## Formation and matching
+Both are scheduled work and run in [`peersweep`](../peersweep/README.md) — one Job
+Function, one hourly cron, sequential. This function only writes the rows the sweep reads
+(`enrolled` signups, `waiting_since`; `formed_time` is the sweep's own). The opt-in link in
+the formation email points at `PEER_ORIGIN/?gt=<token>#/gruppe`.
+
+## Shared core
+`./_shared/peer-common.js` (mail, cohort meta, dates, link paragraphs) is a **copy** of
+`functions/_shared/peer-common.js`, shared with `peersweep`. Edit the source, then
+`node functions/sync-shared.mjs` and commit the copies; `--check` fails when a copy is
+stale. Catalyst packs one folder per function and cannot follow a `require()` outside it.
 
 ## Deploy (host terminal)
 1. Create the Data Store tables above (Development first).
-2. Set the env vars per function as described above (`ADMIN_KEY` and `PEER_ORIGIN` on
-   `peer`; nothing on `accesscontrol`; `ZEPTOMAIL_TOKEN`/`ZEPTOMAIL_FROM` on `peer` once
+2. Set the env vars per function as described above (`PEER_ORIGIN` on `peer` and
+   `peersweep`; nothing on `accesscontrol`; `ZEPTOMAIL_TOKEN`/`ZEPTOMAIL_FROM` on both once
    ZeptoMail's EU endpoint + DPA are confirmed — OQ-037), **and** register the peer origin
    under Authorized Domains for that environment (DL-082 §1) — that is a project setting,
    not a function setting, and it is what the browser preflight depends on.
    Development: done 2026-09-08 (`peer-dev.habify30.k-a-d-o.com`, hostname only — the
    API rejects a value with a `https://` scheme).
-3. `catalyst deploy` (functions target `peer`; `accesscontrol` is also updated — it now
-   returns `capabilities` and allows the peer origin).
+3. Development: `catalyst deploy --only functions:peer,functions:peersweep --dc eu --org
+   20116360871` (after `node functions/sync-shared.mjs`). Production: console deployment
+   assistant only — the CLI cannot reach it — then env vars again, then `GET /server/peer/`
+   and compare `build`. Directly after "DEPLOYMENT SUCCESSFUL" the old instance may still
+   answer; repeat until the marker matches.
 4. Build and deploy the peer frontend **separately**: `npm run build:peer` in `shell/`
    produces `dist-peer/` (peer entry only, emitted as `index.html`), which goes to its
    **own** Slate app on `PEER_ORIGIN`. The Shell build (`npm run build` → `dist/`) goes to
@@ -132,7 +159,10 @@ in the formation email points at `PEER_ORIGIN/?gt=<token>#/gruppe`.
    turn DL-086's structural isolation back into a code convention.
    Set `VITE_API_BASE` for the peer build as well; it calls the gateway cross-origin (the
    `/api` dev proxy is dev-only), so `PEER_ORIGIN` must be an Authorized Domain on the
-   gateway (DL-082) in addition to being set as an env var on `peer` and `accesscontrol`.
+   gateway (DL-082) in addition to being set as an env var on `peer` and `peersweep`.
+   Two build scripts write to the same `dist-peer/`: `build:peer` (Production gateway) and
+   `build:peer:dev` (Development backend). `catalyst deploy slate` uploads whatever is there
+   — **after a `build:peer`, run `build:peer:dev` again before the next Development deploy.**
 
 ## Matching order (DL-037, precedence per DL-087)
 1. **Pair two solos** into a new 2-group as soon as two are available — no waiting for a
@@ -144,22 +174,11 @@ in the formation email points at `PEER_ORIGIN/?gt=<token>#/gruppe`.
 3. A lone solo with no open group waits. After **3 days** the bundled broadcast goes to
    the 2-person groups that are **not yet open** (an open one would already have taken them).
 
-## Crons (configured in Development)
-Advanced-I/O functions are **not** cron-triggerable from the function's own Configuration
-tab — that only offers the API Gateway. Crons live in the separate **Job Scheduling**
-service (console → Job Scheduling), model: *Job Pool → Cron → Jobs*.
-
-Set up in Development:
-- **Job Pool `peerjobs`** — type *Webhook*, max count **1** (so two sweeps can never run
-  concurrently and double-pair).
-- **Cron `peerformation`** — `0 3 * * *` (Europe/Berlin) → POST `…/server/peer/run-formation`
-- **Cron `peermatching`** — `0 * * * *` (Europe/Berlin) → POST `…/server/peer/run-matching`
-
-Both carry the header `Content-Type: application/json` and the body `{"key":"<ADMIN_KEY>"}`
-(the key lives in the cron config, never in git; the *Parameters* toggle stays off so the
-secret is never a query string). Both were verified once via *Submit Job* → HTTP 200.
-
-**Prod still needs the same setup** — job pool, both crons, and the env vars.
+## Crons
+None on this function. Advanced-I/O functions are not cron-triggerable, and since DL-094 no
+cron calls a `peer` URL at all — the Webhook pool `peerjobs` and the crons `peerformation` /
+`peermatching` are deleted. The one cron of the system belongs to `peersweep`; pool, cron,
+IDs, environment state and operating rules are in its README.
 
 ## Email copy
 The readable mirror of every mail this system sends moved up to the repository root as
