@@ -1,16 +1,20 @@
 "use strict";
 
-// Peer-group backend (DL-053 / DL-035–037 / DL-086). pid-only context, NO user_id —
-// this function never reads or writes a user_id (DL-053). Three routes, matching the
-// client contract (peerApi.ts):
+// Peer-group backend, participant-facing half (DL-053 / DL-035–037 / DL-086). pid-only
+// context, NO user_id — this function never reads or writes a user_id (DL-053). Routes,
+// matching the client contract (peerApi.ts):
 //   POST /enrol          — put an address on the pid-scoped signup list (consent + domain enforced)
+//   POST /enrol-confirm  — the double-opt-in link; only here does an address become `enrolled`
 //   POST /exit-request   — email a one-time exit link IF the address is enrolled (always non-revealing)
 //   POST /exit-confirm   — the emailed link's token removes the address; notifies the rest of the group
-//   POST /run-formation  — (DL-035) admin-key guarded; forms 2–3 groups at the cutoff (cron)
 //   POST /group-status   — (DL-037) read a 2-group's open-to-new flag via its opt-in token
 //   POST /group-optin    — (DL-037) toggle that flag
 //   POST /pool-join      — (DL-087) dissolved group's last member enters the wait pool by link
-//   POST /run-matching   — (DL-037/087) admin-key guarded cron sweep: wait-pool matching + 3-day broadcast
+//
+// The scheduled half — group formation and wait-pool matching — lives in the Job Function
+// `peersweep` (2026-09-11). It used to be /run-formation and /run-matching here, guarded
+// by an ADMIN_KEY; both routes and the key are gone. Nothing in this function forms or
+// matches any more.
 //
 // Called only from the peer-group origin (its own subdomain, DL-086); the Shell never
 // calls this function. That origin has to be an Authorized Domain on the API Gateway for
@@ -19,14 +23,20 @@
 //
 // Lifecycle (DL-087): exit is FINAL — it removes the address from the list and does not
 // re-pool anyone. Wait-pool entry is always an active act: a late joiner's enrolment, or
-// a dissolved group's last member clicking their link. Matching itself runs ONLY in
-// /run-matching, the serialised cron sweep — see matchCohort. Entering the pool therefore
-// always means waiting for the next sweep; /run-matching is also the home of the 3-day
-// broadcast.
+// a dissolved group's last member clicking their link. Matching itself runs ONLY in the
+// `peersweep` Job Function, hourly and serialised. Entering the pool therefore always means
+// waiting for the next sweep.
 
 const express = require('express');
 const catalyst = require('zcatalyst-sdk-node');
 const crypto = require('crypto');
+// Shared core — a COPY of functions/_shared/peer-common.js, see functions/sync-shared.mjs.
+const {
+  PEER_ORIGIN, validPid,
+  parseCatalystDate, formatStichtag, catalystNow,
+  loadCohortMeta, contactFooter, zeptoSend,
+  channelParagraph, optinParagraph,
+} = require('./_shared/peer-common');
 
 const app = express();
 app.use(express.json());
@@ -44,7 +54,6 @@ app.use(express.urlencoded({ extended: true }));
 // gateway's header and this function's `access-control-allow-origin: null`, and browsers
 // reject a response with multiple Access-Control-Allow-Origin headers even when the
 // values match. New origin ⇒ register an Authorized Domain, do not add headers here.
-const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
 
 /**
  * Build marker — bump this whenever a deploy's effect has to be verifiable from outside.
@@ -59,7 +68,7 @@ const PEER_ORIGIN = process.env.PEER_ORIGIN || "";
  * Do NOT read it from a secret or an env var: `Get_Function` returns every environment
  * variable in cleartext, so anything placed there is exposed by an ordinary read.
  */
-const BUILD = "2026-09-10-sweep-only";
+const BUILD = "2026-09-11-peersweep";
 
 const EMAIL_FORMAT = /^[^\s@']+@[^\s@']+\.[a-z]{2,}$/i;
 const TOKEN_TTL_HOURS = 24;
@@ -67,9 +76,6 @@ const TOKEN_TTL_HOURS = 24;
 // only reaches `enrolled` — and therefore an allocation — after its owner clicks the link.
 const CONFIRM_TTL_DAYS = 7;
 
-function validPid(pid) {
-  return typeof pid === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(pid);
-}
 function parseList(val) {
   return String(val || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
 }
@@ -79,27 +85,6 @@ function domainAllowed(email, domains, exceptions) {
   if (domains.includes(domain)) return true;
   return exceptions.some((e) => e === email || e === domain);
 }
-function parseCatalystDate(val) {
-  if (!val) return null;
-  const iso = String(val).replace(" ", "T").replace(/:(\d{3})$/, ".$1");
-  const d = new Date(iso);
-  return isNaN(d.getTime()) ? null : d;
-}
-// "2026-09-16 00:00:00" → "16. September 2026" for the mail texts. Returns null rather
-// than a half-formatted string when the value is missing or unparseable — the callers
-// leave the sentence out entirely in that case (same fail-open stance as the mail frame).
-function formatStichtag(raw) {
-  const d = parseCatalystDate(raw);
-  if (!d) return null;
-  const months = ["Januar", "Februar", "März", "April", "Mai", "Juni",
-    "Juli", "August", "September", "Oktober", "November", "Dezember"];
-  return d.getDate() + ". " + months[d.getMonth()] + " " + d.getFullYear();
-}
-
-function catalystNow(offsetMs) {
-  return new Date(Date.now() + (offsetMs || 0)).toISOString().replace("T", " ").substring(0, 19);
-}
-
 // --- IP rate limit for /exit-request (mirrors recovery/DL-057): it triggers an
 // outbound email, so throttle it against mail-bombing an address. ---
 const RL_LIMIT = 10;
@@ -128,77 +113,6 @@ async function isRateLimited(catalystApp, req) {
   }
 }
 
-/**
- * Per-cohort mail context: the programme name prefixes every subject, and the contact
- * address is the "questions" route (the sender is a noreply address). Both already live
- * on AccessControl (DL-058). Fail-open: without them the mails still send, just without
- * prefix/footer.
- */
-async function loadCohortMeta(catalystApp, pid) {
-  const safePid = String(pid || "").replace(/'/g, "");
-  if (!safePid) return { programmName: "", contactEmail: "" };
-  try {
-    const rows = await catalystApp.zcql().executeZCQLQuery(
-      "SELECT programm_name, contact_email FROM AccessControl WHERE pid = '" + safePid + "'"
-    );
-    if (rows && rows.length) {
-      const r = rows[0].AccessControl;
-      return { programmName: r.programm_name || "", contactEmail: r.contact_email || "" };
-    }
-  } catch (e) {
-    console.log("cohort meta skipped:", e && e.message);
-  }
-  return { programmName: "", contactEmail: "" };
-}
-
-function contactFooter(contactEmail) {
-  if (!contactEmail) return "";
-  return '<p style="color:#6a625c;font-size:13px">Diese E-Mail wird automatisch verschickt — bitte antworte nicht darauf. ' +
-    'Bei Fragen wende dich an <a href="mailto:' + contactEmail + '">' + contactEmail + '</a>.</p>';
-}
-
-/**
- * ZeptoMail (EU endpoint). Server-to-server; the token is a secret env var, never in code
- * (DL-086). No-ops (logs) if unconfigured, so Dev without creds still behaves.
- * `meta` carries the cohort's programme name (subject prefix) and contact address (footer).
- */
-async function zeptoSend(toEmail, subject, htmlbody, meta) {
-  // ZeptoMail's console shows the Send-Mail key already carrying the scheme
-  // ("Zoho-enczapikey <key>"), because that is the whole Authorization header value it
-  // expects you to paste. Copying it verbatim into ZEPTOMAIL_TOKEN is therefore the
-  // natural thing to do — and it doubled the scheme here, which ZeptoMail answers with
-  // 401. Measured 2026-09-09 in Development, and invisible from outside: a failed send is
-  // only logged, because /exit-request must stay non-revealing (DL-053). So accept both
-  // shapes rather than relying on whoever sets the variable to strip the prefix.
-  const rawToken = (process.env.ZEPTOMAIL_TOKEN || "").trim();
-  const token = rawToken.replace(/^Zoho-enczapikey\s+/i, "");
-  const from = process.env.ZEPTOMAIL_FROM;
-  const m = meta || {};
-  const fullSubject = m.programmName ? (m.programmName + ": " + subject) : subject;
-  if (!token || !from) { console.log("ZeptoMail not configured — skipping:", fullSubject); return; }
-  try {
-    const resp = await fetch("https://api.zeptomail.eu/v1.1/email", {
-      method: "POST",
-      headers: { "Authorization": "Zoho-enczapikey " + token, "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify({
-        from: { address: from, name: "habify30" },
-        to: [{ email_address: { address: toEmail } }],
-        subject: fullSubject,
-        htmlbody: htmlbody + contactFooter(m.contactEmail),
-      }),
-    });
-    // Log both outcomes, not just failures. /exit-request must answer {ok:true} whether or
-    // not the address exists (DL-053), so the HTTP response can never carry send status —
-    // the log is the only channel there is. Logging failures alone made a broken send
-    // indistinguishable from a working one from every side at once (measured 2026-09-09:
-    // a doubled auth scheme produced 401s that surfaced nowhere).
-    if (resp.ok) console.log("ZeptoMail sent:", fullSubject);
-    else console.log("ZeptoMail send failed:", resp.status, await resp.text().catch(() => ""));
-  } catch (e) {
-    console.log("ZeptoMail send error:", e && e.message);
-  }
-}
-
 // Exit link mail (DL-053). Needs PEER_ORIGIN for a usable link, so it is skipped without it.
 async function sendExitEmail(toEmail, link, meta) {
   if (!PEER_ORIGIN) { console.log("PEER_ORIGIN not set — skipping exit mail."); return; }
@@ -211,55 +125,6 @@ async function sendExitEmail(toEmail, link, meta) {
   await zeptoSend(toEmail, "Abmeldung aus deiner Peergruppe bestätigen", htmlbody, meta);
 }
 
-// Fisher–Yates with a CSPRNG (DL-035: fully random assignment).
-function shuffle(arr) {
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = crypto.randomInt(0, i + 1);
-    const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
-  }
-  return arr;
-}
-
-// Partition n (>=2) into groups of 2–3 (DL-035). n%3: 0 → all 3s; 1 → leave 2+2; 2 → one 2.
-function groupSizes(n) {
-  const sizes = [];
-  if (n < 2) return sizes;
-  if (n % 3 === 0) { for (let i = 0; i < n / 3; i++) sizes.push(3); }
-  else if (n % 3 === 1) { for (let i = 0; i < (n - 4) / 3; i++) sizes.push(3); sizes.push(2, 2); }
-  else { for (let i = 0; i < (n - 2) / 3; i++) sizes.push(3); sizes.push(2); }
-  return sizes;
-}
-
-// --- German email copy, final version reviewed by Matthias (2026-09-08).
-// Every subject is prefixed with the cohort's programme name and every mail carries the
-// contact-address footer — both added by zeptoSend via `meta` (DL-058 fields). ---
-function channelParagraph() {
-  return "<p>Meldet euch untereinander über eure E-Mail-Adressen und entscheidet euch für einen Kanal, " +
-    "der für euch am besten passt (MS Teams, Messenger-App, Treffen in der Kantine). Kanal und Rhythmus " +
-    "sollten so gewählt sein, dass ihr euch in der Momentumphase über kurze Updates gegenseitig motiviert, dranzubleiben.</p>";
-}
-function optinParagraph(optinLink, intro) {
-  return "<p>" + intro + "</p>" +
-    "<p><a href=\"" + optinLink + "\">Gruppe für neue Mitglieder öffnen/schließen</a></p>" +
-    "<p>Über den gleichen Link könnt ihr eure Gruppe jederzeit wieder schließen.</p>";
-}
-function formationBody(otherEmails, optinLink) {
-  const list = otherEmails.map((e) => "<li>" + e + "</li>").join("");
-  let body =
-    "<p>Deine Peergruppe für die Momentumphase steht — ihr begleitet euch gegenseitig durch die 30 Tage.</p>" +
-    "<p>Das sind die anderen aus deiner Gruppe:</p><ul>" + list + "</ul>" +
-    channelParagraph();
-  if (optinLink) {
-    body += optinParagraph(optinLink,
-      "Aktuell seid ihr zu zweit in dieser Gruppe. Wenn ihr offen für ein drittes Mitglied seid, könnt ihr eure " +
-      "Gruppe hier öffnen — so haben Nachzügler eine bessere Chance, auch noch in einer Gruppe unterzukommen.");
-  }
-  return body;
-}
-function notEnoughBody() {
-  return "<p>Es haben sich noch nicht genügend Teilnehmende auf der Warteliste eingetragen, um eine Gruppe zu bilden. " +
-    "Sobald jemand dazukommt, ordnen wir dich zu und du bekommst eine automatische Benachrichtigung.</p>";
-}
 function exitNotificationBody(optinLink) {
   let body = "<p>Ein Mitglied hat eure habify30-Peergruppe verlassen.</p>" +
     "<p>Ihr könnt euch als verbleibende Gruppe weiter austauschen wie bisher.</p>";
@@ -298,297 +163,6 @@ function waitPoolInfoBody() {
     "</ul><p>Ehrlich gesagt: eine Zuordnung ist nicht garantiert. Trägt sich in diesem Durchlauf niemand mehr ein, " +
     "kann es leider nichts werden. Abmelden von der Warteliste kannst du dich jederzeit.</p>";
 }
-function asyncMatchPairBody(otherEmail, optinLink) {
-  let body = "<p>Es hat geklappt — du hast eine Peergruppe. Ihr seid zu zweit: jemand hat wie du auf eine Gruppe gewartet.</p>" +
-    "<p>Das ist die andere Person:</p><ul><li>" + otherEmail + "</li></ul>" +
-    channelParagraph();
-  if (optinLink) {
-    body += optinParagraph(optinLink,
-      "Ihr seid zu zweit. Wenn ihr offen für ein drittes Mitglied seid, könnt ihr eure Gruppe hier öffnen.");
-  }
-  return body;
-}
-function asyncMatchJoinBody(otherEmails) {
-  const list = otherEmails.map((e) => "<li>" + e + "</li>").join("");
-  return "<p>Du bist in eine bestehende Peergruppe aufgenommen worden. Die beiden sind schon ein Stück zusammen unterwegs — du kommst dazu.</p>" +
-    "<p>Das sind ihre E-Mail-Adressen:</p><ul>" + list + "</ul>" +
-    "<p>Schreib ihnen am besten direkt, damit sie wissen, dass du da bist und sie dich in ihren Kommunikations-Kanal aufnehmen können.</p>";
-}
-function newMemberBody(newEmail) {
-  return "<p>Eure habify30-Peergruppe hat ein neues Mitglied — ihr seid jetzt zu dritt.</p>" +
-    "<p>Neu dabei:</p><ul><li>" + newEmail + "</li></ul>" +
-    "<p>Nehmt die Person bitte in euren Kommunikations-Kanal auf.</p>";
-}
-function broadcastBody(count, optinLink) {
-  const lead = count === 1
-    ? "Gerade wartet eine Person auf eine Peergruppe und findet keine."
-    : ("Gerade warten " + count + " Personen auf eine Peergruppe und finden keine.");
-  return "<p>" + lead + "</p>" +
-    "<p>Ihr seid zu zweit in eurer Gruppe. Wenn ihr euch vorstellen könntet, eine wartende Person aufzunehmen, " +
-    "öffnet eure Gruppe hier — wir ordnen dann automatisch jemanden zu:</p>" +
-    "<p><a href=\"" + optinLink + "\">Gruppe für ein neues Mitglied öffnen</a></p>" +
-    "<p>Wenn das für euch nicht passt, ignoriere diese E-Mail einfach.</p>";
-}
-
-/**
- * Claim a signup for a group before writing anything else.
- *
- * **This is not a lock, and must not be relied on as one.** Measured on Development
- * 2026-09-10: under real concurrency two parallel runs both reported winning the claim on
- * the same row, and one then overwrote the other's assignment. The datastore does not
- * serialise `WHERE group_id IS NULL` against a competing write. The same measurement
- * disqualified the two other candidates — a cache-segment key (`put` overwrites silently)
- * and a unique column (4 of 10 concurrent insert pairs produced duplicates in a column
- * declared unique). Catalyst offers no application-level mutual exclusion; the only
- * serialisation this system has is a job pool with max count 1.
- *
- * What it still buys, and why it stays: the claim runs *before* the group row exists, so a
- * pairing that cannot be completed leaves no PeerGroups row behind, and nobody is put in a
- * group of one. Under the serialised sweep (matchCohort's header) there is no competing
- * writer anyway — this is the second line, not the first.
- *
- * Returns true if this run got the row, false if it was already taken.
- */
-async function claimSignup(catalystApp, rowid, groupId) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    "UPDATE PeerSignups SET group_id = '" + String(groupId).replace(/'/g, "") + "', status = 'grouped'" +
-    " WHERE ROWID = " + String(rowid).replace(/[^0-9]/g, "") + " AND group_id IS NULL"
-  );
-  return !!(rows && rows.length);
-}
-
-/**
- * Give a claimed row back. Only ever called when a pairing could not be completed — the
- * `group_id` condition makes sure a run releases nothing but its own claim, even if the
- * row has meanwhile been taken over by someone else.
- */
-async function releaseSignup(catalystApp, rowid, groupId) {
-  await catalystApp.zcql().executeZCQLQuery(
-    "UPDATE PeerSignups SET group_id = NULL, status = 'enrolled'" +
-    " WHERE ROWID = " + String(rowid).replace(/[^0-9]/g, "") +
-    " AND group_id = '" + String(groupId).replace(/'/g, "") + "'"
-  );
-}
-
-// Form all groups for one cohort: shuffle enrolled (ungrouped) members, partition into
-// 2–3, create PeerGroups rows, assign members, email everyone. Idempotent per cohort
-// via CohortConfig.formed_time (set by the caller's guard).
-async function formCohort(catalystApp, pid) {
-  const safePid = String(pid).replace(/'/g, "");
-  const meta = await loadCohortMeta(catalystApp, safePid);
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    "SELECT ROWID, email FROM PeerSignups WHERE pid = '" + safePid + "' AND status = 'enrolled'"
-  );
-  const members = (rows || []).map((r) => r.PeerSignups);
-  const groups = catalystApp.datastore().table("PeerGroups");
-  let formedGroups = 0;
-
-  if (members.length >= 2) {
-    shuffle(members);
-    const sizes = groupSizes(members.length);
-    let idx = 0;
-    for (const size of sizes) {
-      const grp = members.slice(idx, idx + size);
-      idx += size;
-      const groupId = crypto.randomBytes(8).toString("hex");   // 16 hex
-
-      // Claim every member before the group exists. Someone a parallel run has already
-      // grouped must not be pulled into a second group, and must not receive a second
-      // "your group is set" mail. What is left after claiming is the real group.
-      const claimed = [];
-      for (const m of grp) {
-        if (await claimSignup(catalystApp, m.ROWID, groupId)) claimed.push(m);
-      }
-      if (claimed.length < 2) {
-        // A group of one is no group — hand the row back so the wait pool can use it.
-        for (const m of claimed) await releaseSignup(catalystApp, m.ROWID, groupId);
-        continue;
-      }
-
-      // Decided after claiming, not before: only an actual 2-group may grow, and losing a
-      // member to a parallel run can turn a planned 3 into a 2.
-      const optinToken = claimed.length === 2 ? crypto.randomBytes(16).toString("hex") : null;
-      await groups.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
-      for (const m of claimed) {
-        const others = claimed.filter((x) => x.email !== m.email).map((x) => x.email);
-        const optinLink = optinToken ? (PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe") : null;
-        await zeptoSend(m.email, "Deine habify30-Peergruppe steht", formationBody(others, optinLink), meta);
-      }
-      formedGroups++;
-    }
-  } else if (members.length === 1) {
-    await zeptoSend(members[0].email, "Peergruppe: diesmal keine Zuteilung", notEnoughBody(), meta);
-  }
-
-  // Mark the cohort formed (idempotency guard for the cron).
-  const cc = await catalystApp.zcql().executeZCQLQuery("SELECT ROWID FROM CohortConfig WHERE pid = '" + safePid + "'");
-  if (cc && cc.length) {
-    await catalystApp.datastore().table("CohortConfig").updateRow({ ROWID: cc[0].CohortConfig.ROWID, formed_time: catalystNow(0) });
-  }
-  return { pid: safePid, members: members.length, groups: formedGroups };
-}
-
-// Read the cohort's wait pool: `enrolled` signups without a group. After formation that
-// is exactly the pool (DL-087): late joiners + members of a dissolved group who opted
-// back in. Never people who exited (they are `exited`) or dissolved members who have not
-// clicked their link yet (they are `dissolved`).
-async function readSolos(catalystApp, safePid) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    "SELECT ROWID, email, waiting_since, group_id FROM PeerSignups WHERE pid = '" + safePid + "' AND status = 'enrolled'"
-  );
-  const solos = (rows || []).map((r) => r.PeerSignups).filter((s) => !s.group_id);
-  // Longest waiting first — fairness. (DL-035's "fully random" governs who is grouped
-  // with whom at the cutoff, not the order of a queue.)
-  solos.sort((a, b) => {
-    const ta = parseCatalystDate(a.waiting_since);
-    const tb = parseCatalystDate(b.waiting_since);
-    return (ta ? ta.getTime() : 0) - (tb ? tb.getTime() : 0);
-  });
-  return solos;
-}
-
-async function readGroups(catalystApp, safePid) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    "SELECT ROWID, group_id, open_to_new, optin_token FROM PeerGroups WHERE pid = '" + safePid + "'"
-  );
-  return (rows || []).map((r) => r.PeerGroups);
-}
-
-async function membersOf(catalystApp, groupId) {
-  const rows = await catalystApp.zcql().executeZCQLQuery(
-    "SELECT ROWID, email FROM PeerSignups WHERE group_id = '" + String(groupId).replace(/'/g, "") + "' AND status = 'grouped'"
-  );
-  return (rows || []).map((r) => r.PeerSignups);
-}
-
-function isOpen(g) {
-  return g.open_to_new === true || g.open_to_new === "true";
-}
-
-/**
- * Wait-pool matching for one cohort (DL-037, precedence per DL-087):
- *   1. pair two solos into a new 2-group — as soon as two are available, no waiting for a 3rd;
- *   2. only a single LEFTOVER solo goes into an opt-in-open 2-group ("if the wait pool
- *      cannot otherwise fill"). So two solos pair with each other even when an open group
- *      exists — that leaves nobody behind.
- * Returns the emails still waiting afterwards, so the caller can send the wait-pool
- * information mail to someone who has just entered and was not matched immediately.
- */
-/**
- * **Call this from the cron sweep only.** `/run-matching` runs through the job pool
- * `peerjobs`, whose max count of 1 is the only serialisation Catalyst gives us (measured
- * 2026-09-10 — see claimSignup). Calling it from a participant-facing route puts a second
- * writer on the same wait pool, and two of those pair the same person into two groups.
- *
- * Until 2026-09-10 `/enrol-confirm` and `/pool-join` called it for an immediate match. They
- * no longer do: entering the pool now always means waiting for the next sweep. That costs
- * up to an hour of reaction time and is the price of correctness.
- */
-async function matchCohort(catalystApp, pid) {
-  const safePid = String(pid).replace(/'/g, "");
-  const meta = await loadCohortMeta(catalystApp, safePid);
-  const signups = catalystApp.datastore().table("PeerSignups");
-  const groupsT = catalystApp.datastore().table("PeerGroups");
-  let solos = await readSolos(catalystApp, safePid);
-  let paired = 0;
-  let absorbed = 0;
-
-  while (solos.length >= 2) {
-    const a = solos.shift();
-    const b = solos.shift();
-    const groupId = crypto.randomBytes(8).toString("hex");
-
-    // Claim both before the group is created or a single mail goes out. A half-claimed
-    // pair would strand one person in a group of one, so the first claim is given back
-    // if the second fails. The person who could not be claimed is gone from the pool
-    // either way — a parallel run has already placed them; the other returns to the queue.
-    if (!(await claimSignup(catalystApp, a.ROWID, groupId))) {
-      solos.unshift(b); continue;
-    }
-    if (!(await claimSignup(catalystApp, b.ROWID, groupId))) {
-      await releaseSignup(catalystApp, a.ROWID, groupId);
-      solos.unshift(a);
-      continue;
-    }
-
-    const optinToken = crypto.randomBytes(16).toString("hex"); // a new 2-group may grow
-    await groupsT.insertRow({ pid: safePid, group_id: groupId, open_to_new: false, optin_token: optinToken });
-    // Separate from the claim: the claim owns group_id/status and must stay conditional.
-    for (const m of [a, b]) {
-      await signups.updateRow({ ROWID: m.ROWID, waiting_since: null });
-    }
-    const optinLink = PEER_ORIGIN + "/?gt=" + optinToken + "#/gruppe";
-    await zeptoSend(a.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(b.email, optinLink), meta);
-    await zeptoSend(b.email, "Geschafft – deine habify30-Peergruppe steht nun fest", asyncMatchPairBody(a.email, optinLink), meta);
-    paired += 2;
-  }
-
-  if (solos.length === 1) {
-    const solo = solos[0];
-    for (const g of (await readGroups(catalystApp, safePid)).filter(isOpen)) {
-      const members = await membersOf(catalystApp, g.group_id);
-      if (members.length !== 2) continue; // only 2-groups may grow (DL-035 max size 3)
-      // If the claim fails, a parallel run has already placed this person. Nothing to do
-      // and nothing to undo — the group stays open for whoever comes next.
-      if (!(await claimSignup(catalystApp, solo.ROWID, g.group_id))) { solos = []; break; }
-      await signups.updateRow({ ROWID: solo.ROWID, waiting_since: null });
-      await groupsT.updateRow({ ROWID: g.ROWID, open_to_new: false }); // now full
-      await zeptoSend(solo.email, "Du bist in eine Peergruppe aufgenommen", asyncMatchJoinBody(members.map((m) => m.email)), meta);
-      for (const m of members) {
-        await zeptoSend(m.email, "Eure Peergruppe hat ein neues Mitglied", newMemberBody(solo.email), meta);
-      }
-      solos = [];
-      absorbed = 1;
-      break;
-    }
-  }
-
-  return { paired, absorbed, waiting: solos.map((s) => s.email) };
-}
-
-/**
- * 3-day escalation (DL-037, retargeted by DL-087): if anyone has been waiting ≥3 days,
- * send ONE bundled broadcast per cohort to the 2-person groups that are NOT yet open —
- * an already-open group would have absorbed the solo automatically. Sent at most once per
- * waiting episode; the marker resets once the pool has run empty.
- */
-async function broadcastIfDue(catalystApp, cohort) {
-  const safePid = String(cohort.pid).replace(/'/g, "");
-  const cfgT = catalystApp.datastore().table("CohortConfig");
-  const solos = await readSolos(catalystApp, safePid);
-
-  if (solos.length === 0) {
-    if (cohort.last_broadcast_time && cohort.ROWID) {
-      await cfgT.updateRow({ ROWID: cohort.ROWID, last_broadcast_time: null }); // episode over
-    }
-    return { sent: 0 };
-  }
-  if (cohort.last_broadcast_time) return { sent: 0 }; // already broadcast this episode
-
-  const threshold = Date.now() - 3 * 24 * 3600 * 1000;
-  const overdue = solos.filter((s) => {
-    const t = parseCatalystDate(s.waiting_since);
-    return t && t.getTime() <= threshold;
-  });
-  if (overdue.length === 0) return { sent: 0 };
-
-  const meta = await loadCohortMeta(catalystApp, safePid);
-  let sent = 0;
-  for (const g of (await readGroups(catalystApp, safePid)).filter((x) => x.optin_token && !isOpen(x))) {
-    const members = await membersOf(catalystApp, g.group_id);
-    if (members.length !== 2) continue;
-    const link = PEER_ORIGIN + "/?gt=" + g.optin_token + "#/gruppe";
-    for (const m of members) {
-      await zeptoSend(m.email, "Jemand wartet auf eine Peergruppe", broadcastBody(solos.length, link), meta);
-    }
-    sent++;
-  }
-  if (sent > 0 && cohort.ROWID) {
-    await cfgT.updateRow({ ROWID: cohort.ROWID, last_broadcast_time: catalystNow(0) });
-  }
-  return { sent };
-}
-
 app.get("/", (req, res) => {
   res.status(200).json({ status: "ok", message: "peer is live", build: BUILD });
 });
@@ -880,38 +454,6 @@ app.post("/exit-confirm", async (req, res) => {
   }
 });
 
-// --- Group formation (DL-035). Invoked by a Catalyst Cron (daily). Admin-key guarded
-// so it is not publicly triggerable — the cron sends ADMIN_KEY. Forms every cohort
-// whose cutoff has passed and that is not yet formed. `pid` + `force` (admin) forms one
-// cohort regardless of cutoff (manual/testing). ---
-app.post("/run-formation", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
-  const body = req.body || {};
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey || body.key !== adminKey) { res.status(403).json({ status: "error", message: "forbidden" }); return; }
-
-  const onlyPid = validPid(body.pid) ? String(body.pid).replace(/'/g, "") : null;
-  const force = body.force === true;
-
-  try {
-    let q = "SELECT pid, peer_group_cutoff_date, formed_time FROM CohortConfig";
-    if (onlyPid) q += " WHERE pid = '" + onlyPid + "'";
-    const cRows = await catalystApp.zcql().executeZCQLQuery(q);
-    const due = (cRows || []).map((r) => r.CohortConfig).filter((c) => {
-      if (c.formed_time) return false; // already formed (idempotent)
-      if (onlyPid && force) return true; // manual override for a named cohort
-      const cutoff = parseCatalystDate(c.peer_group_cutoff_date);
-      return cutoff && Date.now() >= cutoff.getTime();
-    });
-    const formed = [];
-    for (const c of due) formed.push(await formCohort(catalystApp, c.pid));
-    res.status(200).json({ status: "ok", formed });
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ status: "error", message: String(err && err.message) });
-  }
-});
-
 // --- Opt-in-growth (DL-037 A3): read + toggle a 2-person group's open-to-new flag via
 // the token from the formation email. Only 2-groups have an optin_token. ---
 app.post("/group-status", async (req, res) => {
@@ -972,7 +514,7 @@ app.post("/pool-join", async (req, res) => {
       ROWID: row.ROWID, status: "enrolled", group_id: null, pool_token: null, waiting_since: catalystNow(0),
     });
 
-    // No immediate match any more (2026-09-10, see matchCohort): the pool is worked by the
+    // No immediate match any more (2026-09-10, see peersweep): the pool is worked by the
     // serialised cron sweep, so entering it always means waiting. `matched` stays in the
     // response contract and is now always false — the client already handles that branch.
     const meta = await loadCohortMeta(catalystApp, safePid);
@@ -981,55 +523,6 @@ app.post("/pool-join", async (req, res) => {
   } catch (err) {
     console.log(err);
     res.status(200).json({ status: "ok", ok: false, reason: "invalid" });
-  }
-});
-
-// --- Cron sweep (DL-037/DL-087). Matching also runs immediately at both pool entries;
-// this is the safety net plus the home of the inherently time-based 3-day broadcast. ---
-app.post("/run-matching", async (req, res) => {
-  const catalystApp = catalyst.initialize(req, { type: catalyst.type.advancedio });
-  const body = req.body || {};
-  const adminKey = process.env.ADMIN_KEY;
-  if (!adminKey || body.key !== adminKey) { res.status(403).json({ status: "error", message: "forbidden" }); return; }
-
-  const onlyPid = validPid(body.pid) ? String(body.pid).replace(/'/g, "") : null;
-  try {
-    // Sweep away enrolments whose confirmation link has expired. These are addresses for
-    // which consent was never completed — nobody ever proved the mailbox is theirs — so
-    // keeping them would mean storing personal data on the strength of a form submission
-    // alone. Only `pending` rows past their own expiry are touched; a confirmed member has
-    // no confirm_token and can never match this.
-    let purged = 0;
-    try {
-      const stale = await catalystApp.zcql().executeZCQLQuery(
-        "SELECT ROWID, confirm_token_expiry FROM PeerSignups WHERE status = 'pending'"
-      );
-      const signups = catalystApp.datastore().table("PeerSignups");
-      for (const r of (stale || [])) {
-        const row = r.PeerSignups;
-        const exp = parseCatalystDate(row.confirm_token_expiry);
-        if (exp && Date.now() > exp.getTime()) { await signups.deleteRow(row.ROWID); purged++; }
-      }
-    } catch (purgeErr) {
-      console.log("pending purge skipped:", purgeErr && purgeErr.message);
-    }
-
-    let q = "SELECT ROWID, pid, formed_time, last_broadcast_time FROM CohortConfig";
-    if (onlyPid) q += " WHERE pid = '" + onlyPid + "'";
-    const cRows = await catalystApp.zcql().executeZCQLQuery(q);
-    // Only formed cohorts have a wait pool — before the cutoff everyone waits for formation.
-    const cohorts = (cRows || []).map((r) => r.CohortConfig).filter((c) => c.formed_time);
-
-    const results = [];
-    for (const c of cohorts) {
-      const m = await matchCohort(catalystApp, c.pid);
-      const b = await broadcastIfDue(catalystApp, c);
-      results.push({ pid: c.pid, paired: m.paired, absorbed: m.absorbed, waiting: m.waiting.length, broadcastGroups: b.sent });
-    }
-    res.status(200).json({ status: "ok", purged, results });
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ status: "error", message: String(err && err.message) });
   }
 });
 
