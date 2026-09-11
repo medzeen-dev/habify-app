@@ -13,6 +13,10 @@
     {
       "name": "peerpages",
       "source": "shell/dist-peer"
+    },
+    {
+      "name": "shell",
+      "source": "shell/dist"
     }
   ]
 }
